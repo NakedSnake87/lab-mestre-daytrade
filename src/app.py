@@ -9,7 +9,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 # ── CONFIG ──────────────────────────────────────────────────────────────────
-GEMINI_KEY = "AIzaSyCWQuirMzM1BqMT-8N71-Yz5lxEbNzzP0o"  # substitua pela sua chave real
+GEMINI_KEY = "AIzaSyBIZeYsjxmfTzySLKOf_N2UdbBB2HkIBrc"  # substitua pela sua chave real
 NEWS_KEY   = "5124f5a861fa416db858736df592d6a1"           # substitua pela sua chave real
 
 st.set_page_config(page_title="MestreDoDayTrade Pro", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
