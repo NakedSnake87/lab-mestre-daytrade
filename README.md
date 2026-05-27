@@ -1,48 +1,52 @@
-# 📈 MestreDoDayTrade v4.0 — Agente Financeiro Inteligente com IA Generativa
+# 📈 MestreDoDayTrade Pro — Agente Financeiro Inteligente com IA Generativa
 
-> Projeto desenvolvido para o desafio **"Agente Financeiro Inteligente com IA Generativa"** da [DIO](https://www.dio.me).
+> Projeto desenvolvido para o desafio **"Agente Financeiro Inteligente com IA Generativa"** da [DIO](https://www.dio.me) em parceria com o **Bradesco**.
+
+🔗 **[Acesse o app ao vivo](https://lab-mestre-daytrade-putevtf7ehtwizjdswgfsp.streamlit.app)**
 
 ---
 
 ## 🤖 Sobre o Agente
 
-O **MestreDoDayTrade** é um copiloto de alta performance especializado em contratos futuros de **Mini-Índice (WIN)** e **Mini-Dólar (WDO)** na B3. Ele atua como um mentor sênior de mesa proprietária, combinando IA Generativa com dados reais do trader para oferecer análises proativas, controle de risco e feedbacks comportamentais.
+O **MestreDoDayTrade Pro** é um assistente inteligente especializado em contratos futuros de **Mini-Índice (WIN)** e **Mini-Dólar (WDO)** na B3. Combina IA Generativa com dados de mercado em tempo real para oferecer análise técnica, controle de risco e educação operacional para traders de varejo.
 
 ---
 
-## 🎯 Caso de Uso
+## 🎯 Problema que Resolve
 
-Traders de varejo que operam WIN e WDO frequentemente perdem dinheiro não por falta de técnica, mas por **descontrole emocional** — fúria de mercado, overtrading e insistência em setups que não estão funcionando no dia.
+95% dos day traders perdem dinheiro — não por falta de técnica, mas por **descontrole emocional**: fúria de mercado, overtrading e quebra do gerenciamento de risco.
 
-O MestreDoDayTrade resolve isso sendo um **gerente de risco automatizado e mentor comportamental**, que:
+O MestreDoDayTrade atua como um **gerente de risco e mentor comportamental** que:
 
-- Monitora o saldo do pregão em tempo real
-- Aciona trava de segurança quando o stop diário é violado
-- Identifica padrões de erro (ex: dois stops seguidos no mesmo setup)
+- Monitora mercados globais em tempo real (S&P 500, Nasdaq, DAX, Nikkei, Petróleo, Ouro, Dólar, Bitcoin)
+- Busca e analisa notícias relevantes com impacto direto no WIN e WDO
+- Calcula risco real de cada operação (stop, meta, RR, risco do capital)
+- Explica padrões gráficos com representação visual (OCO, Topo Duplo, Fibonacci, Candles japoneses)
 - Analisa prints de gráficos do ProfitPro via IA multimodal
-- Nunca emite "calls" de compra/venda (conformidade regulatória CVM)
+- **Nunca emite "calls"** de compra/venda (conformidade regulatória CVM)
 
 ---
 
-## 🚀 Funcionalidades Principais
+## 🚀 Funcionalidades
 
 | Funcionalidade | Descrição |
 |---|---|
-| 🔴 Trava de Risco | Bloqueia o trader quando o stop diário é atingido |
-| 📊 Painel de Métricas | Exibe saldo do pregão e win rate em tempo real |
-| 🧠 IA Proativa | Inicia a conversa com análise baseada nos dados do dia |
-| 📷 Análise Multimodal | Lê prints de gráficos do ProfitPro (VWAP, médias, volume) |
-| 🛡️ Anti-Alucinação | Nunca inventa dados — usa apenas a base de conhecimento local |
+| 🌍 Mercados Globais | 8 índices e ativos em tempo real via Yahoo Finance |
+| 📰 Notícias ao Vivo | Busca notícias financeiras com análise de impacto no WIN/WDO |
+| 🛡️ Calculadora de Risco | Stop, meta, RR, risco do capital e análise de sobrevivência |
+| 🤖 Chat Especialista | Explica padrões gráficos, indicadores e ferramentas do Profit |
+| 📷 Análise Multimodal | Lê prints de gráficos do ProfitPro e identifica padrões |
+| 🔄 Aviso de Rolagem | Alerta automático nos meses de vencimento de contratos |
 
 ---
 
-## 🛠️ Tecnologias Utilizadas
+## 🛠️ Tecnologias
 
 - **Python 3.14**
 - **Streamlit** — Interface web interativa
-- **LangChain** — Orquestração de prompts e histórico de conversa
-- **Google Gemini 2.5 Flash** — Modelo LLM multimodal (texto + imagem)
-- **Pandas** — Processamento de dados do histórico de trades
+- **Groq AI (Llama 3.3 70B)** — Modelo LLM ultra-rápido e gratuito
+- **NewsAPI** — Notícias financeiras em tempo real
+- **Yahoo Finance API** — Cotações de mercados globais
 - **Pillow** — Processamento de imagens dos gráficos
 
 ---
@@ -55,8 +59,8 @@ lab-mestre-daytrade/
 ├── README.md
 │
 ├── data/
-│   ├── perfil_investidor.json       # Plano de trade: stop diário, meta, contratos
-│   └── transacoes.csv               # Histórico de ordens executadas no pregão
+│   ├── perfil_investidor.json       # Plano de trade mockado
+│   └── transacoes.csv               # Histórico de operações mockado
 │
 ├── docs/
 │   ├── 01-documentacao-agente.md    # Caso de uso e arquitetura
@@ -65,8 +69,10 @@ lab-mestre-daytrade/
 │   ├── 04-metricas.md               # Avaliação e métricas
 │   └── 05-pitch.md                  # Roteiro do pitch
 │
-└── src/
-    └── app.py                       # Código-fonte da aplicação Streamlit
+├── src/
+│   └── app.py                       # Código-fonte da aplicação
+│
+└── requirements.txt                 # Dependências do projeto
 ```
 
 ---
@@ -75,30 +81,43 @@ lab-mestre-daytrade/
 
 ```bash
 # 1. Instalar dependências
-pip install streamlit pandas langchain langchain-google-genai pillow
+pip install streamlit requests groq Pillow
 
-# 2. Rodar a aplicação
+# 2. Configurar secrets (criar arquivo .streamlit/secrets.toml)
+# GROQ_KEY = "sua_chave_groq"
+# NEWS_KEY = "sua_chave_newsapi"
+
+# 3. Rodar
 streamlit run src/app.py
 ```
 
-> ⚠️ Necessário ter uma chave de API do [Google AI Studio](https://aistudio.google.com) configurada no arquivo `src/app.py`.
-
 ---
 
-## 🛡️ Mecanismo Anti-Alucinação
+## 🧠 Arquitetura
 
-O agente utiliza a técnica **RAG (Retrieval-Augmented Generation)**: os dados do trader (`perfil_investidor.json` e `transacoes.csv`) são injetados diretamente no System Prompt antes de cada resposta. A IA nunca busca dados externos — responde exclusivamente com base na realidade operacional do usuário.
+```
+[Usuário] → [Interface Streamlit]
+                    ↓
+     [Yahoo Finance API] → Cotações em tempo real
+     [NewsAPI]           → Notícias do mercado
+                    ↓
+     [System Prompt + Contexto de mercado]
+                    ↓
+     [Groq AI - Llama 3.3 70B]
+                    ↓
+     [Resposta proativa e personalizada]
+```
 
 ---
 
 ## 📢 Pitch
 
-**O problema:** 95% dos day traders perdem dinheiro — não por falta de técnica, mas por descontrole emocional e quebra do gerenciamento de risco.
+**O problema:** 95% dos day traders perdem dinheiro por descontrole emocional e quebra do gerenciamento de risco — não por falta de técnica.
 
-**A solução:** O MestreDoDayTrade monitora o pregão em tempo real, aciona travas automáticas e age como um mentor que manda você largar o mouse antes que o prejuízo vire catástrofe.
+**A solução:** O MestreDoDayTrade combina dados de mercado em tempo real com IA Generativa para ser o copiloto que todo trader de varejo precisava — monitorando riscos, analisando gráficos e educando sobre padrões técnicos.
 
-**O diferencial:** IA multimodal que lê gráficos do ProfitPro + conformidade regulatória total (zero calls).
+**O diferencial:** IA multimodal que lê gráficos reais do ProfitPro + notícias em tempo real + conformidade regulatória total (zero calls).
 
 ---
 
-*Desenvolvido por [NakedSnake87](https://github.com/NakedSnake87) para o bootcamp de IA Generativa da DIO.*
+*Desenvolvido por [NakedSnake87](https://github.com/NakedSnake87) para o bootcamp de IA Generativa da DIO × Bradesco.*
