@@ -1,7 +1,4 @@
 streamlit
-pandas
 requests
-langchain
-langchain-google-genai
-langchain-core
+groq
 Pillow
