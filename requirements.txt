@@ -1,5 +1,7 @@
 streamlit
 pandas
 requests
-anthropic
+langchain
+langchain-google-genai
+langchain-core
 Pillow
