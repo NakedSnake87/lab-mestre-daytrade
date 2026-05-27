@@ -1,35 +1,38 @@
 import streamlit as st
 import requests
 import base64
-import anthropic
 from datetime import datetime
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
-# ── CONFIG ───────────────────────────────────────────────────────────────────
-CLAUDE_KEY = "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"
-NEWS_KEY   = "5124f5a861fa416db858736df592d6a1"
+# ── CONFIG via Streamlit Secrets ─────────────────────────────────────────────
+GEMINI_KEY = st.secrets["GEMINI_KEY"]
+NEWS_KEY   = st.secrets["NEWS_KEY"]
 
-def claude(prompt, system="", historico=None, imagem_b64=None):
-    client = anthropic.Anthropic(api_key=CLAUDE_KEY)
+def gemini(prompt, system="", historico=None, imagem_b64=None):
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.15, google_api_key=GEMINI_KEY)
     msgs = []
+    if system:
+        msgs.append(SystemMessage(content=system))
     if historico:
         for h in historico:
-            msgs.append({"role": h["role"], "content": h["content"]})
+            if h["role"] == "user":
+                msgs.append(HumanMessage(content=h["content"]))
+            else:
+                msgs.append(AIMessage(content=h["content"]))
     if imagem_b64:
-        msgs.append({"role": "user", "content": [
-            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": imagem_b64}},
-            {"type": "text", "text": prompt}
-        ]})
+        msgs.append(HumanMessage(content=[
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{imagem_b64}"}}
+        ]))
     else:
-        msgs.append({"role": "user", "content": prompt})
-    kwargs = {"model": "claude-sonnet-4-5", "max_tokens": 2048, "messages": msgs}
-    if system:
-        kwargs["system"] = system
-    resp = client.messages.create(**kwargs)
-    return resp.content[0].text
+        msgs.append(HumanMessage(content=prompt))
+    resp = llm.invoke(msgs)
+    return resp.content
 
 st.set_page_config(page_title="MestreDoDayTrade Pro", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 
-# ── CSS PROFISSIONAL ──────────────────────────────────────────────────────────
+# ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
@@ -39,8 +42,8 @@ st.markdown("""
 .stApp { background: #080B10 !important; }
 p, li, span, div, label { color: #F0F4F8 !important; }
 h1 { color: #FFFFFF !important; font-weight: 700 !important; font-size: 26px !important; }
-h2 { color: #FFFFFF !important; font-weight: 600 !important; font-size: 20px !important; }
-h3 { color: #E2E8F0 !important; font-weight: 600 !important; font-size: 16px !important; }
+h2 { color: #FFFFFF !important; font-weight: 600 !important; }
+h3 { color: #E2E8F0 !important; font-weight: 600 !important; }
 strong, b { color: #FFFFFF !important; font-weight: 700 !important; }
 .stTabs [data-baseweb="tab-list"] { background: #0F1520; border-radius: 10px; padding: 5px; gap: 4px; border: 1px solid #1E2D40; }
 .stTabs [data-baseweb="tab"] { background: transparent; color: #94A3B8 !important; border-radius: 8px; font-weight: 600; font-size: 13px; padding: 8px 18px; border: none; }
@@ -57,11 +60,11 @@ strong, b { color: #FFFFFF !important; font-weight: 700 !important; }
 .news-meta { color: #64748B !important; font-size: 11px; margin-bottom: 8px; }
 .news-desc { color: #94A3B8 !important; font-size: 13px; line-height: 1.6; }
 .stChatMessage { background: #0F1520 !important; border: 1px solid #1E2D40 !important; border-radius: 12px !important; padding: 16px !important; margin-bottom: 12px !important; }
-.stChatMessage p { color: #F0F4F8 !important; font-size: 15px !important; line-height: 1.7 !important; font-weight: 400 !important; }
+.stChatMessage p { color: #F0F4F8 !important; font-size: 15px !important; line-height: 1.7 !important; }
 .stChatMessage li { color: #E2E8F0 !important; font-size: 14px !important; line-height: 1.8 !important; }
 .stChatMessage strong, .stChatMessage b { color: #60A5FA !important; font-weight: 700 !important; }
-.stChatMessage h1, .stChatMessage h2, .stChatMessage h3 { color: #60A5FA !important; font-weight: 700 !important; }
-.stChatMessage code { background: #1E2D40 !important; color: #10B981 !important; padding: 2px 6px; border-radius: 4px; font-size: 13px !important; }
+.stChatMessage h1,.stChatMessage h2,.stChatMessage h3 { color: #60A5FA !important; font-weight: 700 !important; }
+.stChatMessage code { background: #1E2D40 !important; color: #10B981 !important; padding: 2px 6px; border-radius: 4px; }
 .stChatInput textarea { background: #0F1520 !important; border: 1px solid #2563EB !important; border-radius: 10px !important; color: #F0F4F8 !important; font-size: 15px !important; }
 .stButton button { background: linear-gradient(135deg, #1D4ED8, #2563EB) !important; color: #FFFFFF !important; border: none !important; border-radius: 8px !important; font-weight: 600 !important; }
 .risco-card { background: #0F1520; border: 1px solid #1E2D40; border-radius: 12px; padding: 20px; margin-bottom: 12px; }
@@ -69,7 +72,7 @@ strong, b { color: #FFFFFF !important; font-weight: 700 !important; }
 .risco-value { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
 .risco-sub { color: #94A3B8 !important; font-size: 12px; }
 .stNumberInput input, .stTextInput input { background: #0F1520 !important; border: 1px solid #1E2D40 !important; color: #F0F4F8 !important; border-radius: 8px !important; }
-[data-testid="stNumberInput"] label, [data-testid="stTextInput"] label, [data-testid="stSelectbox"] label { color: #94A3B8 !important; font-size: 13px !important; }
+[data-testid="stNumberInput"] label,[data-testid="stTextInput"] label,[data-testid="stSelectbox"] label { color: #94A3B8 !important; font-size: 13px !important; }
 hr { border-color: #1E2D40 !important; }
 .roll-notice { background: rgba(37,99,235,0.1); border: 1px solid #2563EB; border-radius: 10px; padding: 14px 18px; margin-bottom: 16px; color: #93C5FD !important; font-size: 13px; }
 </style>
@@ -85,7 +88,7 @@ st.markdown("""
     </div>
     <div style="margin-left:auto;text-align:right">
         <div style="color:#64748B;font-size:11px">POWERED BY</div>
-        <div style="color:#60A5FA;font-size:13px;font-weight:600">Claude AI</div>
+        <div style="color:#60A5FA;font-size:13px;font-weight:600">Gemini AI</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -96,7 +99,7 @@ if hoje.month in [2, 4, 6, 8, 10, 12]:
     st.markdown(f"""
     <div class="roll-notice">
         🔄 <b>Atenção Rolagem:</b> Estamos em {hoje.strftime('%B/%Y')} — verifique a liquidez do contrato ativo.
-        WIN vence na quarta mais próxima do dia 15. WDO vence mensalmente no 1º dia útil.
+        WIN vence na quarta mais próxima do dia 15. WDO vence no 1º dia útil do mês.
     </div>
     """, unsafe_allow_html=True)
 
@@ -104,11 +107,11 @@ if hoje.month in [2, 4, 6, 8, 10, 12]:
 aba1, aba2, aba3 = st.tabs(["🌍 Mercados & Notícias", "🛡️ Gerenciamento de Risco", "🤖 Chat com o Mestre"])
 
 # ════════════════════════════════════════════════════════════════════════════
-# ABA 1 — MERCADOS GLOBAIS + NOTÍCIAS
+# ABA 1 — MERCADOS + NOTÍCIAS
 # ════════════════════════════════════════════════════════════════════════════
 with aba1:
     st.markdown("### 🌍 Mercados Globais em Tempo Real")
-    st.markdown('<div style="color:#64748B;font-size:13px;margin-bottom:16px">Principais índices e ativos que impactam diretamente o WIN e o WDO</div>', unsafe_allow_html=True)
+    st.markdown('<div style="color:#64748B;font-size:13px;margin-bottom:16px">Índices e ativos que impactam diretamente o WIN e o WDO</div>', unsafe_allow_html=True)
 
     tickers = {
         "S&P 500": "^GSPC", "Nasdaq": "^IXIC", "DAX": "^GDAXI",
@@ -120,34 +123,27 @@ with aba1:
         st.session_state.pop("mercados_data", None)
 
     if "mercados_data" not in st.session_state:
-        mercados_html = '<div class="market-grid">'
+        html = '<div class="market-grid">'
         for nome, ticker in tickers.items():
             try:
                 url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=2d"
                 r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-                data = r.json()
-                closes = data["chart"]["result"][0]["indicators"]["quote"][0]["close"]
+                closes = r.json()["chart"]["result"][0]["indicators"]["quote"][0]["close"]
                 closes = [c for c in closes if c is not None]
                 if len(closes) >= 2:
                     atual, ant = closes[-1], closes[-2]
                     var = ((atual - ant) / ant) * 100
-                    cor_val = "#10B981" if var >= 0 else "#EF4444"
-                    cor_bg  = "rgba(16,185,129,0.15)" if var >= 0 else "rgba(239,68,68,0.15)"
-                    cor_txt = "#10B981" if var >= 0 else "#EF4444"
-                    sinal   = "▲" if var >= 0 else "▼"
+                    cor = "#10B981" if var >= 0 else "#EF4444"
+                    bg  = "rgba(16,185,129,0.15)" if var >= 0 else "rgba(239,68,68,0.15)"
+                    s   = "▲" if var >= 0 else "▼"
                     fmt = f"R$ {atual:.4f}" if ticker == "BRL=X" else (f"{atual:,.0f}" if atual > 10000 else f"{atual:,.2f}")
-                    mercados_html += f"""
-                    <div class="market-card">
-                        <div class="market-name">{nome}</div>
-                        <div class="market-value" style="color:{cor_val}">{fmt}</div>
-                        <span class="market-change" style="background:{cor_bg};color:{cor_txt}">{sinal} {abs(var):.2f}%</span>
-                    </div>"""
+                    html += f'<div class="market-card"><div class="market-name">{nome}</div><div class="market-value" style="color:{cor}">{fmt}</div><span class="market-change" style="background:{bg};color:{cor}">{s} {abs(var):.2f}%</span></div>'
                 else:
-                    mercados_html += f'<div class="market-card"><div class="market-name">{nome}</div><div style="color:#64748B;font-size:13px">—</div></div>'
+                    html += f'<div class="market-card"><div class="market-name">{nome}</div><div style="color:#64748B">—</div></div>'
             except:
-                mercados_html += f'<div class="market-card"><div class="market-name">{nome}</div><div style="color:#64748B;font-size:13px">—</div></div>'
-        mercados_html += "</div>"
-        st.session_state["mercados_data"] = mercados_html
+                html += f'<div class="market-card"><div class="market-name">{nome}</div><div style="color:#64748B">—</div></div>'
+        html += "</div>"
+        st.session_state["mercados_data"] = html
 
     st.markdown(st.session_state.get("mercados_data", ""), unsafe_allow_html=True)
 
@@ -167,8 +163,7 @@ with aba1:
         with st.spinner("Buscando notícias..."):
             try:
                 url = f"https://newsapi.org/v2/everything?q={q}&language=pt&sortBy=publishedAt&pageSize=12&apiKey={NEWS_KEY}"
-                r = requests.get(url, timeout=10)
-                arts = r.json().get("articles", [])
+                arts = requests.get(url, timeout=10).json().get("articles", [])
                 st.session_state["noticias_cache"] = arts
             except:
                 arts = []
@@ -186,19 +181,19 @@ with aba1:
                 st.markdown(f"""
                 <div class="news-card">
                     <div class="news-title">{titulo}</div>
-                    <div class="news-meta">📡 {fonte} &nbsp;·&nbsp; 📅 {data_p}</div>
+                    <div class="news-meta">📡 {fonte} · 📅 {data_p}</div>
                     <div class="news-desc">{desc}...</div>
-                    <a href="{link}" target="_blank" style="color:#3B82F6;font-size:12px;font-weight:600;text-decoration:none">Ler matéria completa →</a>
+                    <a href="{link}" target="_blank" style="color:#3B82F6;font-size:12px;font-weight:600;text-decoration:none">Ler completo →</a>
                 </div>
                 """, unsafe_allow_html=True)
 
         st.markdown("---")
         if st.button("🤖 Analisar impacto no WIN e WDO", type="primary"):
-            with st.spinner("Claude analisando..."):
+            with st.spinner("Analisando..."):
                 headlines = "\n".join([a.get("title","") for a in arts[:6] if a.get("title") and "[Removed]" not in a.get("title","")])
-                system = "Você é um analista sênior de mercado futuro brasileiro especializado em Mini-Índice (WIN) e Mini-Dólar (WDO) na B3."
-                prompt = f"""Manchetes de hoje:\n{headlines}\n\nAnalise:\n1. **Impacto no WIN:** tendência e por quê\n2. **Impacto no WDO:** tendência e por quê\n3. **Riscos do dia** para o trader\n4. **Horários críticos** de volatilidade\n5. **Correlações importantes**\n\nSeja direto e use linguagem de trader profissional."""
-                resp = claude(prompt, system=system)
+                system = "Você é analista sênior de mercado futuro brasileiro especializado em Mini-Índice (WIN) e Mini-Dólar (WDO) na B3."
+                prompt = f"""Manchetes de hoje:\n{headlines}\n\nAnalise:\n1. **Impacto no WIN** — tendência e motivo\n2. **Impacto no WDO** — tendência e motivo\n3. **Riscos do dia** para o trader de futuros\n4. **Horários críticos** de volatilidade\n5. **Correlações importantes** (petróleo, juros, câmbio)\n\nSeja direto. Use linguagem de trader profissional."""
+                resp = gemini(prompt, system=system)
                 st.markdown(f'<div class="card">{resp}</div>', unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -265,19 +260,10 @@ with aba2:
 
     st.markdown("---")
     if st.button("🤖 Mestre, avalia meu setup", type="primary"):
-        with st.spinner("Claude avaliando..."):
-            system = f"Você é um gerente de risco sênior de mesa proprietária especializado em {nome_ativo} na B3."
-            prompt = f"""Setup do trader:
-- Capital: R$ {capital:.2f} | Contratos: {contratos}
-- Stop: {stop_pts} pts (R$ {stop_rs:.2f}) | Meta: {meta_pts} pts (R$ {meta_rs:.2f})
-- RR: {rr:.2f}x | Risco do capital: {risco_pct:.2f}%
-
-Avalie diretamente:
-1. Este setup é viável?
-2. O que ajustar?
-3. Win rate mínimo para ser lucrativo?
-4. Recomendação final em 1 linha"""
-            resp = claude(prompt, system=system)
+        with st.spinner("Analisando..."):
+            system = f"Você é gerente de risco sênior de mesa proprietária especializado em {nome_ativo} na B3."
+            prompt = f"""Setup:\n- Capital: R$ {capital:.2f} | Contratos: {contratos}\n- Stop: {stop_pts} pts (R$ {stop_rs:.2f}) | Meta: {meta_pts} pts (R$ {meta_rs:.2f})\n- RR: {rr:.2f}x | Risco: {risco_pct:.2f}%\n\n1. Setup viável?\n2. O que ajustar?\n3. Win rate mínimo para lucrar?\n4. Recomendação final em 1 linha"""
+            resp = gemini(prompt, system=system)
             st.markdown(f'<div class="card">{resp}</div>', unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -292,28 +278,26 @@ with aba3:
 - Plataforma ProfitPro: Book, Tape Reading, indicadores, configurações
 - Análise técnica: Price Action, VWAP, Médias Móveis, Fibonacci, Bollinger
 - Padrões gráficos: OCO, Topo/Fundo Duplo, Triângulos, Bandeiras, Cunhas
-- Candles japoneses: Doji, Martelo, Estrela Cadente, Engolfo, Harami, Marubozu
+- Candles: Doji, Martelo, Estrela Cadente, Engolfo, Harami, Marubozu
 - Ondas de Elliott, Volume Profile, Teoria de Dow
 - Gerenciamento de risco e psicologia do trader
 
-REGRA IMPORTANTE SOBRE PADRÕES GRÁFICOS:
-Sempre que explicar um padrão, inclua representação visual em ASCII mostrando como ele aparece no gráfico. Exemplo para Topo Duplo:
+REGRA SOBRE PADRÕES GRÁFICOS:
+Sempre inclua representação visual ASCII. Exemplo Topo Duplo:
 ```
     /\    /\
    /  \  /  \  ← Dois topos na mesma região
   /    \/    \
-              \  ← Rompimento da neckline = entrada
+              \  ← Rompimento = entrada
 ```
-
-Para cada padrão explique: como identificar, o que significa, como operar (entrada, stop, alvo) e exemplo no WIN/WDO.
+Para cada padrão: como identificar, o que significa, como operar (entrada/stop/alvo) e exemplo WIN/WDO.
 NUNCA dê calls em tempo real. Use linguagem de trader profissional."""
 
     if "chat_mestre" not in st.session_state:
         st.session_state.chat_mestre = []
-        st.session_state.chat_mestre_hist = []
 
     if not st.session_state.chat_mestre:
-        boas_vindas = """👋 **Olá! Sou o MestreDoDayTrade, powered by Claude AI.**
+        st.session_state.chat_mestre.append({"role": "assistant", "content": """👋 **Olá! Sou o MestreDoDayTrade.**
 
 Estou aqui para te ajudar a evoluir no mercado futuro. Posso te explicar:
 
@@ -322,8 +306,7 @@ Estou aqui para te ajudar a evoluir no mercado futuro. Posso te explicar:
 🖥️ **Plataforma Profit** — Book, Tape Reading, configurações
 🧠 **Estratégia e Psicologia** — Disciplina, gerenciamento, setups
 
-**O que você quer aprender hoje?**"""
-        st.session_state.chat_mestre.append({"role": "assistant", "content": boas_vindas})
+**O que você quer aprender hoje?**"""})
 
     for msg in st.session_state.chat_mestre:
         with st.chat_message(msg["role"]):
@@ -338,11 +321,11 @@ Estou aqui para te ajudar a evoluir no mercado futuro. Posso te explicar:
             st.write(user_input)
         st.session_state.chat_mestre.append({"role": "user", "content": user_input})
 
-        hist = [m for m in st.session_state.chat_mestre[:-1] if m["role"] in ["user", "assistant"]]
+        hist = [m for m in st.session_state.chat_mestre[:-1]]
 
-        with st.spinner("Claude analisando..."):
+        with st.spinner("Mestre analisando..."):
             b64 = base64.b64encode(img_chat.getvalue()).decode() if img_chat else None
-            resp = claude(user_input, system=SYSTEM_MESTRE, historico=hist, imagem_b64=b64)
+            resp = gemini(user_input, system=SYSTEM_MESTRE, historico=hist, imagem_b64=b64)
 
         with st.chat_message("assistant"):
             st.write(resp)
@@ -351,6 +334,6 @@ Estou aqui para te ajudar a evoluir no mercado futuro. Posso te explicar:
 # ── FOOTER ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div style="text-align:center;padding:24px 0 8px;border-top:1px solid #1E2D40;margin-top:32px">
-    <span style="color:#1E2D40;font-size:12px">MestreDoDayTrade Pro · Projeto DIO × Bradesco · Powered by Claude AI</span>
+    <span style="color:#1E2D40;font-size:12px">MestreDoDayTrade Pro · Projeto DIO × Bradesco · IA Generativa aplicada ao mercado futuro</span>
 </div>
 """, unsafe_allow_html=True)
