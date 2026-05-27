@@ -2,33 +2,32 @@ import streamlit as st
 import requests
 import base64
 from datetime import datetime
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from groq import Groq
 
 # ── CONFIG via Streamlit Secrets ─────────────────────────────────────────────
-GEMINI_KEY = st.secrets["GEMINI_KEY"]
-NEWS_KEY   = st.secrets["NEWS_KEY"]
+GROQ_KEY = st.secrets["GROQ_KEY"]
+NEWS_KEY  = st.secrets["NEWS_KEY"]
 
-def gemini(prompt, system="", historico=None, imagem_b64=None):
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.15, google_api_key=GEMINI_KEY)
+def ia(prompt, system="", historico=None, imagem_b64=None):
+    client = Groq(api_key=GROQ_KEY)
     msgs = []
     if system:
-        msgs.append(SystemMessage(content=system))
+        msgs.append({"role": "system", "content": system})
     if historico:
         for h in historico:
-            if h["role"] == "user":
-                msgs.append(HumanMessage(content=h["content"]))
-            else:
-                msgs.append(AIMessage(content=h["content"]))
+            msgs.append({"role": h["role"], "content": h["content"]})
     if imagem_b64:
-        msgs.append(HumanMessage(content=[
+        msgs.append({"role": "user", "content": [
             {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{imagem_b64}"}}
-        ]))
+        ]})
     else:
-        msgs.append(HumanMessage(content=prompt))
-    resp = llm.invoke(msgs)
-    return resp.content
+        msgs.append({"role": "user", "content": prompt})
+    
+    # Usa vision model se tiver imagem, senão usa modelo texto
+    model = "meta-llama/llama-4-scout-17b-16e-instruct" if imagem_b64 else "llama-3.3-70b-versatile"
+    resp = client.chat.completions.create(model=model, messages=msgs, max_tokens=2048, temperature=0.15)
+    return resp.choices[0].message.content
 
 st.set_page_config(page_title="MestreDoDayTrade Pro", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
 
@@ -88,7 +87,7 @@ st.markdown("""
     </div>
     <div style="margin-left:auto;text-align:right">
         <div style="color:#64748B;font-size:11px">POWERED BY</div>
-        <div style="color:#60A5FA;font-size:13px;font-weight:600">Gemini AI</div>
+        <div style="color:#60A5FA;font-size:13px;font-weight:600">Groq AI ⚡</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -192,8 +191,8 @@ with aba1:
             with st.spinner("Analisando..."):
                 headlines = "\n".join([a.get("title","") for a in arts[:6] if a.get("title") and "[Removed]" not in a.get("title","")])
                 system = "Você é analista sênior de mercado futuro brasileiro especializado em Mini-Índice (WIN) e Mini-Dólar (WDO) na B3."
-                prompt = f"""Manchetes de hoje:\n{headlines}\n\nAnalise:\n1. **Impacto no WIN** — tendência e motivo\n2. **Impacto no WDO** — tendência e motivo\n3. **Riscos do dia** para o trader de futuros\n4. **Horários críticos** de volatilidade\n5. **Correlações importantes** (petróleo, juros, câmbio)\n\nSeja direto. Use linguagem de trader profissional."""
-                resp = gemini(prompt, system=system)
+                prompt = f"""Manchetes de hoje:\n{headlines}\n\nAnalise:\n1. **Impacto no WIN** — tendência e motivo\n2. **Impacto no WDO** — tendência e motivo\n3. **Riscos do dia** para o trader\n4. **Horários críticos** de volatilidade\n5. **Correlações importantes**\n\nSeja direto. Use linguagem de trader profissional."""
+                resp = ia(prompt, system=system)
                 st.markdown(f'<div class="card">{resp}</div>', unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -263,7 +262,7 @@ with aba2:
         with st.spinner("Analisando..."):
             system = f"Você é gerente de risco sênior de mesa proprietária especializado em {nome_ativo} na B3."
             prompt = f"""Setup:\n- Capital: R$ {capital:.2f} | Contratos: {contratos}\n- Stop: {stop_pts} pts (R$ {stop_rs:.2f}) | Meta: {meta_pts} pts (R$ {meta_rs:.2f})\n- RR: {rr:.2f}x | Risco: {risco_pct:.2f}%\n\n1. Setup viável?\n2. O que ajustar?\n3. Win rate mínimo para lucrar?\n4. Recomendação final em 1 linha"""
-            resp = gemini(prompt, system=system)
+            resp = ia(prompt, system=system)
             st.markdown(f'<div class="card">{resp}</div>', unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -286,9 +285,9 @@ REGRA SOBRE PADRÕES GRÁFICOS:
 Sempre inclua representação visual ASCII. Exemplo Topo Duplo:
 ```
     /\    /\
-   /  \  /  \  ← Dois topos na mesma região
+   /  \  /  \  <- Dois topos na mesma regiao
   /    \/    \
-              \  ← Rompimento = entrada
+              \  <- Rompimento = entrada
 ```
 Para cada padrão: como identificar, o que significa, como operar (entrada/stop/alvo) e exemplo WIN/WDO.
 NUNCA dê calls em tempo real. Use linguagem de trader profissional."""
@@ -320,12 +319,11 @@ Estou aqui para te ajudar a evoluir no mercado futuro. Posso te explicar:
         with st.chat_message("user"):
             st.write(user_input)
         st.session_state.chat_mestre.append({"role": "user", "content": user_input})
-
         hist = [m for m in st.session_state.chat_mestre[:-1]]
 
         with st.spinner("Mestre analisando..."):
             b64 = base64.b64encode(img_chat.getvalue()).decode() if img_chat else None
-            resp = gemini(user_input, system=SYSTEM_MESTRE, historico=hist, imagem_b64=b64)
+            resp = ia(user_input, system=SYSTEM_MESTRE, historico=hist, imagem_b64=b64)
 
         with st.chat_message("assistant"):
             st.write(resp)
@@ -334,6 +332,6 @@ Estou aqui para te ajudar a evoluir no mercado futuro. Posso te explicar:
 # ── FOOTER ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div style="text-align:center;padding:24px 0 8px;border-top:1px solid #1E2D40;margin-top:32px">
-    <span style="color:#1E2D40;font-size:12px">MestreDoDayTrade Pro · Projeto DIO × Bradesco · IA Generativa aplicada ao mercado futuro</span>
+    <span style="color:#1E2D40;font-size:12px">MestreDoDayTrade Pro · Projeto DIO x Bradesco · IA Generativa aplicada ao mercado futuro</span>
 </div>
 """, unsafe_allow_html=True)
