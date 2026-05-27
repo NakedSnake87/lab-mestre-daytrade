@@ -162,7 +162,7 @@ with aba2:
 
     with col2:
         st.markdown("#### Performance do Dia")
-        st.dataframe(trades.style.applymap(
+        st.dataframe(trades.style.map(
             lambda v: "color: #00C853" if isinstance(v, float) and v > 0 else ("color: #FF5252" if isinstance(v, float) and v < 0 else ""),
             subset=["Resultado_RS"]
         ), use_container_width=True)
