@@ -30,4 +30,4 @@ O MestreDoDayTrade Pro é um assistente de IA que combina:
 ---
 
 ## Link do Vídeo
-[Em breve]
+[[Em breve]](https://youtu.be/-3KvhU09HMk)
