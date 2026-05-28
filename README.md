@@ -1,6 +1,6 @@
 # 📈 MestreDoDayTrade Pro — Agente Financeiro Inteligente com IA Generativa
 
-> Projeto desenvolvido para o desafio **"Agente Financeiro Inteligente com IA Generativa"** da [DIO](https://www.dio.me) em parceria com o **Bradesco**.
+> Projeto desenvolvido para o desafio **"Agente Financeiro Inteligente com IA Generativa"** da [DIO](https://www.dio.me) em parceria com o **AFYA**.
 
 🔗 **[Acesse o app ao vivo](https://lab-mestre-daytrade-putevtf7ehtwizjdswgfsp.streamlit.app)**
 
@@ -120,4 +120,4 @@ streamlit run src/app.py
 
 ---
 
-*Desenvolvido por [NakedSnake87](https://github.com/NakedSnake87) para o bootcamp de IA Generativa da DIO × Bradesco.*
+*Desenvolvido por [NakedSnake87](https://github.com/NakedSnake87) para o bootcamp de IA Generativa da DIO × AFYA.*
