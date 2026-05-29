@@ -80,85 +80,100 @@ CRIPTO_IDS = {
     "BNB":      "binancecoin",
 }
 
-@st.cache_data(ttl=90)
-def buscar_cotacoes():
-    resultado = {}
-    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+def _fetch_stooq(nome_sym):
+    """Busca UM ativo no Stooq — roda em thread paralela."""
+    nome, sym = nome_sym
+    hdrs = {"User-Agent": "Mozilla/5.0"}
+    try:
+        url = f"https://stooq.com/q/l/?s={sym}&f=sd2t2ohlcvn&h&e=csv"
+        r = requests.get(url, headers=hdrs, timeout=5)
+        lines = r.text.strip().split("\n")
+        if len(lines) >= 2:
+            cols = lines[1].split(",")
+            if len(cols) >= 7:
+                close = float(cols[6]) if cols[6] not in ("N/D","","0") else 0
+                open_ = float(cols[3]) if cols[3] not in ("N/D","","0") else 0
+                var   = round(((close - open_) / open_ * 100), 2) if open_ else 0
+                if close:
+                    return nome, {"preco": close, "var": var}
+    except:
+        pass
+    return nome, None
 
-    # ── Stooq — índices e commodities ────────────────────────────────────────
-    for nome, sym in STOOQ_MAP.items():
-        try:
-            url = f"https://stooq.com/q/l/?s={sym}&f=sd2t2ohlcvn&h&e=csv"
-            r = requests.get(url, headers=hdrs, timeout=8)
-            lines = r.text.strip().split("\n")
-            if len(lines) >= 2:
-                cols = lines[1].split(",")
-                # cols: Symbol,Date,Time,Open,High,Low,Close,Volume,Name
-                if len(cols) >= 7:
-                    close = float(cols[6]) if cols[6] not in ("N/D","") else 0
-                    open_ = float(cols[3]) if cols[3] not in ("N/D","") else 0
-                    var   = ((close - open_) / open_ * 100) if open_ else 0
-                    if close:
-                        resultado[nome] = {"preco": close, "var": round(var, 2)}
-        except:
-            pass
-
-    # ── WIN e WDO via Stooq ───────────────────────────────────────────────────
-    for nome, sym in [("WIN (Mini-Índ.)", "winm25.sa"), ("WDO (Mini-Dól.)", "wdom25.sa")]:
-        try:
-            url = f"https://stooq.com/q/l/?s={sym}&f=sd2t2ohlcvn&h&e=csv"
-            r = requests.get(url, headers=hdrs, timeout=8)
-            lines = r.text.strip().split("\n")
-            if len(lines) >= 2:
-                cols = lines[1].split(",")
-                if len(cols) >= 7:
-                    close = float(cols[6]) if cols[6] not in ("N/D","") else 0
-                    open_ = float(cols[3]) if cols[3] not in ("N/D","") else 0
-                    var   = ((close - open_) / open_ * 100) if open_ else 0
-                    if close:
-                        resultado[nome] = {"preco": close, "var": round(var, 2)}
-        except:
-            pass
-
-    # ── Frankfurter — forex ───────────────────────────────────────────────────
+def _fetch_forex():
+    hdrs = {"User-Agent": "Mozilla/5.0"}
     try:
         r = requests.get(
             "https://api.frankfurter.app/latest?from=USD&to=BRL,EUR,GBP,JPY,CNY,AUD",
-            timeout=8, headers=hdrs
-        )
+            timeout=5, headers=hdrs)
         if r.status_code == 200:
             rates = r.json().get("rates", {})
-            pares = {
-                "Dólar/BRL": rates.get("BRL", 0),
-                "EUR/USD":   round(1/rates["EUR"], 5) if rates.get("EUR") else 0,
-                "GBP/USD":   round(1/rates["GBP"], 5) if rates.get("GBP") else 0,
-                "USD/JPY":   rates.get("JPY", 0),
-                "AUD/USD":   round(1/rates["AUD"], 5) if rates.get("AUD") else 0,
-                "USD/CNY":   rates.get("CNY", 0),
+            return {
+                "Dólar/BRL": {"preco": rates.get("BRL",0), "var": 0},
+                "EUR/USD":   {"preco": round(1/rates["EUR"],5) if rates.get("EUR") else 0, "var": 0},
+                "GBP/USD":   {"preco": round(1/rates["GBP"],5) if rates.get("GBP") else 0, "var": 0},
+                "USD/JPY":   {"preco": rates.get("JPY",0), "var": 0},
+                "AUD/USD":   {"preco": round(1/rates["AUD"],5) if rates.get("AUD") else 0, "var": 0},
+                "USD/CNY":   {"preco": rates.get("CNY",0), "var": 0},
             }
-            for nome, preco in pares.items():
-                if preco:
-                    resultado[nome] = {"preco": preco, "var": 0}
     except:
         pass
+    return {}
 
-    # ── CoinGecko — cripto ────────────────────────────────────────────────────
+def _fetch_cripto():
+    hdrs = {"User-Agent": "Mozilla/5.0"}
     try:
         ids = ",".join(CRIPTO_IDS.values())
         r = requests.get(
             f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true",
-            timeout=10, headers=hdrs
-        )
+            timeout=6, headers=hdrs)
         if r.status_code == 200:
             data = r.json()
+            res  = {}
             for nome, cid in CRIPTO_IDS.items():
                 if cid in data:
-                    resultado[nome] = {
-                        "preco": data[cid].get("usd", 0),
-                        "var":   round(data[cid].get("usd_24h_change", 0), 2),
+                    res[nome] = {
+                        "preco": data[cid].get("usd",0),
+                        "var":   round(data[cid].get("usd_24h_change",0),2),
                     }
+            return res
     except:
         pass
+    return {}
+
+@st.cache_data(ttl=90)
+def buscar_cotacoes():
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    resultado = {}
+
+    # Todos os símbolos Stooq juntos
+    todos_stooq = list(STOOQ_MAP.items()) + [
+        ("WIN (Mini-Índ.)", "winm25.sa"),
+        ("WDO (Mini-Dól.)",  "wdom25.sa"),
+    ]
+
+    # Roda Stooq em paralelo (todas as requests ao mesmo tempo, não em sequência)
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        futs_stooq = {ex.submit(_fetch_stooq, ns): ns for ns in todos_stooq}
+        fut_forex  = ex.submit(_fetch_forex)
+        fut_cripto = ex.submit(_fetch_cripto)
+
+        for fut in as_completed(futs_stooq, timeout=8):
+            try:
+                nome, dados = fut.result()
+                if dados:
+                    resultado[nome] = dados
+            except:
+                pass
+
+        try:
+            resultado.update({k: v for k, v in fut_forex.result(timeout=6).items() if v and v["preco"]})
+        except:
+            pass
+        try:
+            resultado.update(fut_cripto.result(timeout=7))
+        except:
+            pass
 
     return resultado
 
