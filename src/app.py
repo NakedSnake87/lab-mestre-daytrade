@@ -81,21 +81,33 @@ CRIPTO_IDS = {
 }
 
 def _fetch_stooq(nome_sym):
-    """Busca UM ativo no Stooq — roda em thread paralela."""
+    """Busca UM ativo no Stooq — retorna OHLCV completo."""
     nome, sym = nome_sym
     hdrs = {"User-Agent": "Mozilla/5.0"}
     try:
+        # f=sd2t2ohlcvn → Symbol,Date,Time,Open,High,Low,Close,Volume,Name
         url = f"https://stooq.com/q/l/?s={sym}&f=sd2t2ohlcvn&h&e=csv"
         r = requests.get(url, headers=hdrs, timeout=5)
         lines = r.text.strip().split("\n")
         if len(lines) >= 2:
             cols = lines[1].split(",")
-            if len(cols) >= 7:
-                close = float(cols[6]) if cols[6] not in ("N/D","","0") else 0
-                open_ = float(cols[3]) if cols[3] not in ("N/D","","0") else 0
-                var   = round(((close - open_) / open_ * 100), 2) if open_ else 0
+            if len(cols) >= 8:
+                def safe(v): return float(v) if v not in ("N/D","","0") else 0
+                open_  = safe(cols[3])
+                high   = safe(cols[4])
+                low    = safe(cols[5])
+                close  = safe(cols[6])
+                volume = safe(cols[7])
+                var    = round(((close - open_) / open_ * 100), 2) if open_ else 0
                 if close:
-                    return nome, {"preco": close, "var": var}
+                    return nome, {
+                        "preco":  close,
+                        "var":    var,
+                        "open":   open_,
+                        "high":   high,
+                        "low":    low,
+                        "volume": volume,
+                    }
     except:
         pass
     return nome, None
@@ -158,9 +170,9 @@ def buscar_cotacoes():
         fut_forex  = ex.submit(_fetch_forex)
         fut_cripto = ex.submit(_fetch_cripto)
 
-        for fut in as_completed(futs_stooq, timeout=8):
+        for fut in as_completed(futs_stooq):
             try:
-                nome, dados = fut.result()
+                nome, dados = fut.result(timeout=6)
                 if dados:
                     resultado[nome] = dados
             except:
@@ -171,7 +183,7 @@ def buscar_cotacoes():
         except:
             pass
         try:
-            resultado.update(fut_cripto.result(timeout=7))
+            resultado.update(fut_cripto.result(timeout=6))
         except:
             pass
 
@@ -436,11 +448,11 @@ cotacoes = buscar_cotacoes()
 
 # ── TICKER TAPE ───────────────────────────────────────────────────────────────
 TICKER_ATIVOS = [
-    "IBOVESPA","WIN (Mini-Índ.)","WDO (Mini-Dól.)",
-    "S&P 500","Nasdaq","DAX","FTSE 100","Nikkei",
-    "Petróleo WTI","Ouro",
-    "Dólar/BRL","EUR/USD","GBP/USD","USD/JPY",
-    "Bitcoin","Ethereum","Solana","BNB",
+    "IBOVESPA", "WIN (Mini-Índ.)", "WDO (Mini-Dól.)",
+    "S&P 500", "Nasdaq", "DAX", "Nikkei",
+    "Petróleo WTI", "Ouro",
+    "Dólar/BRL", "EUR/USD",
+    "Bitcoin", "Ethereum",
 ]
 
 def ticker_item(nome, dados):
@@ -497,28 +509,63 @@ with tab1:
     with col_info:
         st.markdown("<div style='color:#475569;font-size:.75rem;padding-top:.55rem'>Stooq · CoinGecko · Frankfurter · atualiza a cada 90s</div>", unsafe_allow_html=True)
 
-    def card_html(nome, dados):
-        p = dados.get("preco",0) if dados else 0
-        v = dados.get("var",  0) if dados else 0
-        if not p:
-            return f'<div class="ativo-card"><div class="ativo-nome">{nome}</div><div class="ativo-preco" style="color:#334155;font-size:.78rem">—</div><div class="ativo-var-nt">sem dado</div></div>'
-        ps = fmt_preco(p)
-        if   v > 0: vh = f'<div class="ativo-var-up">▲ {v:.2f}%</div>'
-        elif v < 0: vh = f'<div class="ativo-var-dn">▼ {abs(v):.2f}%</div>'
-        else:       vh = '<div class="ativo-var-nt">— 0.00%</div>'
-        return f'<div class="ativo-card"><div class="ativo-nome">{nome}</div><div class="ativo-preco">{ps}</div>{vh}</div>'
+    # ── PAINEL DE DETALHE — seletor de ativo ─────────────────────────────────
+    st.markdown('<div class="sec-title">🔍 Detalhe do Ativo</div>', unsafe_allow_html=True)
 
-    grupos = [
-        ("🇧🇷 Brasil",       ["IBOVESPA","WIN (Mini-Índ.)","WDO (Mini-Dól.)"]),
-        ("🌎 Bolsas Globais", ["S&P 500","Nasdaq","DAX","FTSE 100","Nikkei"]),
-        ("🛢️ Commodities",   ["Petróleo WTI","Ouro"]),
-        ("💱 Câmbio",         ["Dólar/BRL","EUR/USD","GBP/USD","USD/JPY","AUD/USD","USD/CNY"]),
-        ("₿ Cripto",          ["Bitcoin","Ethereum","Solana","BNB"]),
+    TODOS_ATIVOS_LISTA = [
+        "IBOVESPA", "WIN (Mini-Índ.)", "WDO (Mini-Dól.)",
+        "S&P 500", "Nasdaq", "DAX", "FTSE 100", "Nikkei",
+        "Petróleo WTI", "Ouro",
+        "Dólar/BRL", "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CNY",
+        "Bitcoin", "Ethereum", "Solana", "BNB",
     ]
-    for gnome, ativos_g in grupos:
-        st.markdown(f'<div class="sec-title">{gnome}</div>', unsafe_allow_html=True)
-        cards = "".join(card_html(a, cotacoes.get(a)) for a in ativos_g)
-        st.markdown(f'<div class="scroll-wrapper"><div class="scroll-track">{cards}</div></div>', unsafe_allow_html=True)
+
+    col_sel, col_space = st.columns([2, 3])
+    with col_sel:
+        ativo_detalhe = st.selectbox("Escolha o ativo", TODOS_ATIVOS_LISTA, label_visibility="collapsed")
+
+    dados_d = cotacoes.get(ativo_detalhe, {})
+    preco_d  = dados_d.get("preco", 0)
+    var_d    = dados_d.get("var",   0)
+    open_d   = dados_d.get("open",  0)
+    high_d   = dados_d.get("high",  0)
+    low_d    = dados_d.get("low",   0)
+    vol_d    = dados_d.get("volume",0)
+
+    if preco_d:
+        cor_var  = "#22c55e" if var_d > 0 else "#ef4444" if var_d < 0 else "#94a3b8"
+        seta     = "▲" if var_d > 0 else "▼" if var_d < 0 else "—"
+        vol_fmt  = f"{vol_d:,.0f}".replace(",",".") if vol_d else "—"
+
+        st.markdown(f"""
+        <div style="background:#0f172a;border:1px solid #1e293b;border-radius:14px;padding:1.2rem 1.5rem;margin-bottom:1rem">
+          <div style="display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;margin-bottom:.9rem">
+            <div style="font-size:1.8rem;font-weight:700;color:#f1f5f9;font-family:'JetBrains Mono',monospace">{fmt_preco(preco_d)}</div>
+            <div style="font-size:1rem;font-weight:700;color:{cor_var}">{seta} {abs(var_d):.2f}%</div>
+            <div style="font-size:.8rem;color:#475569;margin-left:auto">{ativo_detalhe} · Hoje</div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.6rem">
+            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.55rem .8rem">
+              <div style="font-size:.62rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem">Abertura</div>
+              <div style="font-size:.9rem;font-weight:600;color:#f1f5f9;font-family:'JetBrains Mono',monospace">{fmt_preco(open_d) if open_d else '—'}</div>
+            </div>
+            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.55rem .8rem">
+              <div style="font-size:.62rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem">Máxima</div>
+              <div style="font-size:.9rem;font-weight:600;color:#22c55e;font-family:'JetBrains Mono',monospace">{fmt_preco(high_d) if high_d else '—'}</div>
+            </div>
+            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.55rem .8rem">
+              <div style="font-size:.62rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem">Mínima</div>
+              <div style="font-size:.9rem;font-weight:600;color:#ef4444;font-family:'JetBrains Mono',monospace">{fmt_preco(low_d) if low_d else '—'}</div>
+            </div>
+            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.55rem .8rem">
+              <div style="font-size:.62rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem">Volume</div>
+              <div style="font-size:.9rem;font-weight:600;color:#f1f5f9;font-family:'JetBrains Mono',monospace">{vol_fmt}</div>
+            </div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div style="background:#0f172a;border:1px solid #1e293b;border-radius:14px;padding:1.2rem 1.5rem;color:#475569;font-size:.85rem;margin-bottom:1rem">⏳ Aguardando dados de <b>{ativo_detalhe}</b>… Clique em Atualizar.</div>', unsafe_allow_html=True)
 
     # ── NOTÍCIAS ──────────────────────────────────────────────────────────────
     st.markdown('<div class="sec-divider"></div><div class="sec-title">📰 Notícias ao Vivo</div>', unsafe_allow_html=True)
