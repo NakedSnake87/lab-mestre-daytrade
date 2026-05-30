@@ -87,7 +87,7 @@ CRIPTO_IDS = {
     "BNB":      "binancecoin",
 }
 
-def _stooq_csv(sym, timeout=5):
+def _stooq_csv(sym, timeout=3):
     """Busca CSV do Stooq e retorna dict OHLCV ou None."""
     hdrs = {"User-Agent": "Mozilla/5.0"}
     try:
@@ -126,7 +126,7 @@ def _fetch_forex():
     try:
         r = requests.get(
             "https://api.frankfurter.app/latest?from=USD&to=BRL,EUR,GBP,JPY,CNY,AUD",
-            timeout=5, headers=hdrs)
+            timeout=3, headers=hdrs)
         if r.status_code == 200:
             rates = r.json().get("rates", {})
             return {
@@ -147,7 +147,7 @@ def _fetch_cripto():
         ids = ",".join(CRIPTO_IDS.values())
         r = requests.get(
             f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd&include_24hr_change=true",
-            timeout=6, headers=hdrs)
+            timeout=4, headers=hdrs)
         if r.status_code == 200:
             data = r.json()
             res  = {}
@@ -164,135 +164,220 @@ def _fetch_cripto():
 
 @st.cache_data(ttl=90)
 def buscar_cotacoes():
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import ThreadPoolExecutor, as_completed, wait
     resultado = {}
 
-    # Todos os símbolos Stooq juntos
     todos_stooq = list(STOOQ_MAP.items()) + [
         ("WIN (Mini-Índ.)", "winm25.sa"),
         ("WDO (Mini-Dól.)",  "wdom25.sa"),
     ]
 
-    # Roda Stooq em paralelo (todas as requests ao mesmo tempo, não em sequência)
-    with ThreadPoolExecutor(max_workers=12) as ex:
-        futs_stooq = {ex.submit(_fetch_stooq, ns): ns for ns in todos_stooq}
-        fut_forex  = ex.submit(_fetch_forex)
-        fut_cripto = ex.submit(_fetch_cripto)
+    ex = ThreadPoolExecutor(max_workers=14)
+    futs_stooq = {ex.submit(_fetch_stooq, ns): ns for ns in todos_stooq}
+    fut_forex  = ex.submit(_fetch_forex)
+    fut_cripto = ex.submit(_fetch_cripto)
 
-        for fut in as_completed(futs_stooq):
-            try:
-                nome, dados = fut.result(timeout=6)
+    todas = list(futs_stooq.keys()) + [fut_forex, fut_cripto]
+
+    # TIMEOUT TOTAL RÍGIDO: espera no máximo 5 segundos por TUDO
+    done, not_done = wait(todas, timeout=5)
+
+    for fut in done:
+        try:
+            res = fut.result(timeout=0.1)
+            if fut in futs_stooq:
+                nome, dados = res
                 if dados:
                     resultado[nome] = dados
-            except:
-                pass
-
-        try:
-            resultado.update({k: v for k, v in fut_forex.result(timeout=6).items() if v and v["preco"]})
-        except:
-            pass
-        try:
-            resultado.update(fut_cripto.result(timeout=6))
+            elif isinstance(res, dict):
+                resultado.update({k: v for k, v in res.items() if v and v.get("preco")})
         except:
             pass
 
+    # Não espera as threads pendentes — cancela e segue
+    ex.shutdown(wait=False)
     return resultado
 
-# ── NOTÍCIAS — RSS com filtro financeiro rígido ──────────────────────────────
+# ── NOTÍCIAS — RSS de mercado/economia, busca paralela ───────────────────────
+# Feeds ESPECÍFICOS de economia/mercado (não o feed geral que traz política/esporte)
 FEEDS_RSS = [
-    ("InfoMoney",  "https://www.infomoney.com.br/feed/"),
-    ("Reuters BR", "https://feeds.reuters.com/reuters/BRbusinessNews"),
-    ("Exame",      "https://exame.com/feed/"),
-    ("MoneyTimes", "https://www.moneytimes.com.br/feed/"),
-    ("CNN Brasil", "https://www.cnnbrasil.com.br/economy/feed/"),
+    ("InfoMoney",   "https://www.infomoney.com.br/mercados/feed/"),
+    ("InfoMoney",   "https://www.infomoney.com.br/economia/feed/"),
+    ("Exame Invest","https://exame.com/invest/feed/"),
+    ("Exame Econ.", "https://exame.com/economia/feed/"),
+    ("MoneyTimes",  "https://www.moneytimes.com.br/feed/"),
+    ("Valor Inv.",  "https://valorinveste.globo.com/rss/valorinveste/"),
+    ("InvestingBR", "https://br.investing.com/rss/news_25.rss"),
+    ("Suno",        "https://www.suno.com.br/noticias/feed/"),
 ]
+
+# Categorização por palavras-chave
+CATEGORIAS = [
+    ("💱 Câmbio",      {"dólar","dollar","câmbio","real","euro","moeda","brl","cambial"}),
+    ("📊 Bolsa",       {"ibovespa","ibov","bolsa","ações","ação","pregão","b3","índice"}),
+    ("🏦 Economia",    {"selic","copom","juros","ipca","inflação","pib","fiscal","bc","banco central","fed","fomc"}),
+    ("🛢️ Commodities",{"petróleo","ouro","minério","commodity","commodities","soja","milho"}),
+    ("₿ Cripto",       {"bitcoin","btc","ethereum","cripto","crypto","blockchain"}),
+]
+# Notícias com esses termos ganham destaque (borda laranja)
+TERMOS_QUENTES = {"selic","copom","fed","fomc","ipca","ibge","pib","payroll",
+                  "decisão de juros","ata do copom","intervenção","circuit breaker"}
 
 TERMOS_FIN = {
     "ibovespa","ibov","bovespa","b3","bolsa","ações","mercado","índice",
-    "dólar","dollar","câmbio","real","brl","cotação",
+    "dólar","dollar","câmbio","real","brl","cotação","euro","moeda",
     "win","wdo","futuro","futuros","mini-índice","mini-dólar",
     "juros","selic","ipca","inflação","pib","economia","fiscal","copom",
-    "fed","fomc","banco central","bcb","taxa básica",
-    "petróleo","ouro","commodity","commodities",
-    "bitcoin","btc","ethereum","cripto",
-    "s&p","nasdaq","dow jones","nikkei","dax","ftse",
-    "alta","baixa","queda","valoriza","desvalori","recua","sobe","cai",
+    "fed","fomc","banco central","bcb","taxa básica","payroll",
+    "petróleo","ouro","commodity","commodities","minério","soja",
+    "bitcoin","btc","ethereum","cripto","blockchain",
+    "s&p","nasdaq","dow jones","nikkei","dax","ftse","wall street",
+    "alta","baixa","queda","valoriza","desvalori","recua","sobe","cai","dispara",
     "pregão","abertura","fechamento","resultado","lucro","balanço","dividendo",
-    "ação","ativo","investimento","investidor","trader","operação",
+    "ação","ativo","investimento","investidor","trader","operação","tesouro",
 }
 TERMOS_REJEITAR = {
-    "futebol","gol","copa","campeonato","jogador","clube","esporte",
+    "futebol","gol ","copa","campeonato","jogador","clube","esporte",
     "tênis","roland garros","wimbledon","fórmula 1","motogp","ciclismo","olimp",
     "cantor","música","show","cinema","série","novela","ator","atriz","celebridade",
-    "receita culinária","viagem","turismo","moda","beleza","saúde",
-    "crime","polícia","acidente","violência",
-    "djokovic","fonseca","neymar","messi","ronaldo","lebron",
+    "culinária","viagem","turismo","moda","beleza",
+    "crime","polícia","acidente","violência","avião","caverna","resgate","morto",
+    "djokovic","fonseca","neymar","messi","ronaldo","lebron","caiado","zema","kassab",
 }
+
+def _categorizar(texto):
+    tl = texto.lower()
+    for cat, kws in CATEGORIAS:
+        if any(k in tl for k in kws):
+            return cat
+    return "📰 Mercado"
+
+def _eh_quente(texto):
+    tl = texto.lower()
+    return any(k in tl for k in TERMOS_QUENTES)
+
+def _parse_data(pub):
+    """Converte data RSS em datetime; retorna None se falhar."""
+    from email.utils import parsedate_to_datetime
+    try:
+        dt = parsedate_to_datetime(pub)
+        if dt.tzinfo is None:
+            dt = BR_TZ.localize(dt)
+        return dt.astimezone(BR_TZ)
+    except:
+        return None
+
+def _tempo_relativo(dt):
+    if not dt:
+        return ""
+    agora = datetime.now(BR_TZ)
+    delta = agora - dt
+    seg = delta.total_seconds()
+    if seg < 60:     return "agora mesmo"
+    if seg < 3600:   return f"há {int(seg//60)} min"
+    if seg < 86400:  return f"há {int(seg//3600)} h"
+    return dt.strftime("%d/%m %H:%M")
+
+def _fetch_feed(fonte_url):
+    fonte, feed_url = fonte_url
+    out  = []
+    hdrs = {"User-Agent": "Mozilla/5.0 (compatible; newsbot/1.0)"}
+    try:
+        r = requests.get(feed_url, timeout=4, headers=hdrs)
+        if r.status_code != 200:
+            return out
+        root = ET.fromstring(r.content)
+        ch   = root.find("channel") or root
+        for item in (ch.findall("item") or [])[:12]:
+            titulo = (item.findtext("title") or "").strip()
+            desc   = re.sub(r"<[^>]+>", "", item.findtext("description") or "").strip()[:200]
+            link   = (item.findtext("link") or "#").strip()
+            pub    = (item.findtext("pubDate") or "").strip()
+            if titulo and len(titulo) >= 10:
+                out.append({"title": titulo, "desc": desc, "url": link,
+                            "fonte": fonte, "pub_raw": pub})
+    except:
+        pass
+    return out
 
 @st.cache_data(ttl=120)
 def buscar_noticias_rss(query=""):
-    artigos = []
-    hdrs    = {"User-Agent": "Mozilla/5.0 (compatible; newsbot/1.0)"}
+    from concurrent.futures import ThreadPoolExecutor, wait
     q_lower = query.strip().lower()
     termos_busca = [t for t in q_lower.split() if len(t) > 2] if q_lower else []
 
-    for fonte, feed_url in FEEDS_RSS:
+    # Busca todos os feeds EM PARALELO (rápido)
+    brutos = []
+    ex = ThreadPoolExecutor(max_workers=len(FEEDS_RSS))
+    futs = [ex.submit(_fetch_feed, fu) for fu in FEEDS_RSS]
+    done, _ = wait(futs, timeout=5)
+    for f in done:
         try:
-            r = requests.get(feed_url, timeout=8, headers=hdrs)
-            if r.status_code != 200:
-                continue
-            root = ET.fromstring(r.content)
-            ch   = root.find("channel") or root
-            for item in (ch.findall("item") or [])[:10]:
-                titulo = (item.findtext("title") or "").strip()
-                desc   = re.sub(r"<[^>]+>", "", item.findtext("description") or "").strip()[:220]
-                link   = (item.findtext("link") or "#").strip()
-                pub    = (item.findtext("pubDate") or "")[:22].strip()
-
-                if not titulo or len(titulo) < 10:
-                    continue
-
-                tit_low  = titulo.lower()
-                txt_low  = tit_low + " " + desc.lower()
-
-                # Rejeita por palavras proibidas no TÍTULO
-                if any(t in tit_low for t in TERMOS_REJEITAR):
-                    continue
-
-                if termos_busca:
-                    # Busca específica: ao menos 1 termo da busca
-                    if not any(t in txt_low for t in termos_busca):
-                        continue
-                else:
-                    # Sem busca: exige ao menos 1 termo financeiro
-                    if not any(t in txt_low for t in TERMOS_FIN):
-                        continue
-
-                artigos.append({"title": titulo, "desc": desc,
-                                "url": link, "fonte": fonte, "pub": pub})
+            brutos.extend(f.result(timeout=0.1))
         except:
+            pass
+    ex.shutdown(wait=False)
+
+    # Filtra, categoriza, deduplica
+    vistos = set()
+    artigos = []
+    for a in brutos:
+        titulo = a["title"]
+        tit_low = titulo.lower()
+        txt_low = tit_low + " " + a["desc"].lower()
+
+        # Dedup por título
+        chave = tit_low[:60]
+        if chave in vistos:
             continue
+
+        # Rejeita lixo
+        if any(t in tit_low for t in TERMOS_REJEITAR):
+            continue
+
+        # Filtro de relevância
+        if termos_busca:
+            if not any(t in txt_low for t in termos_busca):
+                continue
+        else:
+            if not any(t in txt_low for t in TERMOS_FIN):
+                continue
+
+        vistos.add(chave)
+        dt = _parse_data(a["pub_raw"])
+        artigos.append({
+            "title":    titulo,
+            "desc":     a["desc"],
+            "url":      a["url"],
+            "fonte":    a["fonte"],
+            "cat":      _categorizar(txt_low),
+            "quente":   _eh_quente(txt_low),
+            "dt":       dt,
+            "tempo":    _tempo_relativo(dt),
+        })
+
+    # Ordena por data (mais recente primeiro)
+    artigos.sort(key=lambda x: x["dt"] or datetime.min.replace(tzinfo=BR_TZ), reverse=True)
 
     # Fallback NewsAPI
     if not artigos:
         try:
             q = query or "Ibovespa B3 dólar mercado futuro"
-            url = f"https://newsapi.org/v2/everything?q={q}&language=pt&sortBy=publishedAt&pageSize=10&apiKey={NEWS_KEY}"
-            r = requests.get(url, timeout=8)
+            url = f"https://newsapi.org/v2/everything?q={q}&language=pt&sortBy=publishedAt&pageSize=12&apiKey={NEWS_KEY}"
+            r = requests.get(url, timeout=6)
             for n in r.json().get("articles", []):
                 t = n.get("title","")
                 if t and not any(x in t.lower() for x in TERMOS_REJEITAR):
                     artigos.append({
-                        "title": t,
-                        "desc":  (n.get("description") or "")[:220],
-                        "url":   n.get("url","#"),
-                        "fonte": n.get("source",{}).get("name",""),
-                        "pub":   n.get("publishedAt","")[:16],
+                        "title": t, "desc": (n.get("description") or "")[:200],
+                        "url": n.get("url","#"), "fonte": n.get("source",{}).get("name",""),
+                        "cat": "📰 Mercado", "quente": False, "dt": None,
+                        "tempo": n.get("publishedAt","")[:16],
                     })
         except:
             pass
 
-    return artigos[:8]
+    return artigos[:15]
 
 # ── % RISCO SUGERIDO ──────────────────────────────────────────────────────────
 def risco_sugerido(capital):
@@ -589,32 +674,43 @@ with tab1:
         st.markdown(f'<div style="background:#0f172a;border:1px solid #1e293b;border-radius:14px;padding:1.2rem 1.5rem;color:#475569;font-size:.85rem;margin-bottom:1rem">⏳ Aguardando dados de <b>{ativo_detalhe}</b>… Clique em Atualizar.</div>', unsafe_allow_html=True)
 
     # ── NOTÍCIAS ──────────────────────────────────────────────────────────────
-    st.markdown('<div class="sec-divider"></div><div class="sec-title">📰 Notícias ao Vivo</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec-divider"></div><div class="sec-title">📺 Central de Notícias — Mercado ao Vivo</div>', unsafe_allow_html=True)
     col_busca, col_btn2 = st.columns([5,1])
     with col_busca:
-        query_n = st.text_input("", placeholder="Buscar: Ibovespa, dólar, WIN, juros…", label_visibility="collapsed")
+        query_n = st.text_input("", placeholder="Filtrar: Ibovespa, dólar, WIN, juros, selic…", label_visibility="collapsed")
     with col_btn2:
         st.button("🔍 Buscar")
 
-    with st.spinner("Buscando notícias…"):
+    with st.spinner("Carregando notícias…"):
         noticias = buscar_noticias_rss(query_n)
 
     if not noticias:
         st.markdown('<div style="color:#475569;font-size:.83rem;padding:.8rem 0">Nenhuma notícia encontrada. Tente outro termo.</div>', unsafe_allow_html=True)
     else:
+        st.markdown(f'<div style="font-size:.72rem;color:#475569;margin-bottom:.6rem">🔴 {len(noticias)} notícias · atualiza a cada 2 min</div>', unsafe_allow_html=True)
         for n in noticias:
             t = html_mod.escape(n.get("title",""))
             d = html_mod.escape(n.get("desc",""))
             u = n.get("url","#")
             f = n.get("fonte","")
-            p = n.get("pub","")
+            cat = n.get("cat","📰 Mercado")
+            tempo = n.get("tempo","")
+            quente = n.get("quente", False)
+
+            borda = "border-left:3px solid #f59e0b" if quente else ""
+            badge_quente = '<span style="background:rgba(245,158,11,.18);border:1px solid rgba(245,158,11,.4);border-radius:4px;padding:.12rem .45rem;font-size:.62rem;color:#fbbf24;font-weight:700;margin-left:.4rem">🔥 QUENTE</span>' if quente else ''
+
             st.markdown(f"""
-            <div class="noticia-card">
-              <span class="noticia-fonte">{f}</span>
+            <div class="noticia-card" style="{borda}">
+              <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.35rem;flex-wrap:wrap">
+                <span class="noticia-fonte">{f}</span>
+                <span style="font-size:.65rem;color:#64748b;font-weight:600">{cat}</span>
+                {badge_quente}
+              </div>
               <div class="noticia-titulo">{t}</div>
               {'<div class="noticia-desc">'+d+'</div>' if d else ''}
               <div style="display:flex;justify-content:space-between;margin-top:.45rem;align-items:center">
-                <div class="noticia-meta">{p}</div>
+                <div class="noticia-meta">🕐 {tempo}</div>
                 <div class="noticia-link"><a href="{u}" target="_blank">Ler completo →</a></div>
               </div>
             </div>""", unsafe_allow_html=True)
