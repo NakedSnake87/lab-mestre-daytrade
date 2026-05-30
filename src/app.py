@@ -122,6 +122,7 @@ def _fetch_stooq(nome_sym):
     return nome, dados
 
 def _fetch_forex():
+    """Frankfurter — fallback de câmbio (yfinance é a fonte primária com variações)."""
     hdrs = {"User-Agent": "Mozilla/5.0"}
     try:
         r = requests.get(
@@ -130,13 +131,12 @@ def _fetch_forex():
         if r.status_code == 200:
             rates = r.json().get("rates", {})
             return {
-                # Dólar/BRL fica como fallback (yfinance é a fonte primária com variações)
                 "_Dólar/BRL_fb": {"preco": rates.get("BRL",0), "var": 0},
-                "EUR/USD":   {"preco": round(1/rates["EUR"],5) if rates.get("EUR") else 0, "var": 0},
-                "GBP/USD":   {"preco": round(1/rates["GBP"],5) if rates.get("GBP") else 0, "var": 0},
-                "USD/JPY":   {"preco": rates.get("JPY",0), "var": 0},
-                "AUD/USD":   {"preco": round(1/rates["AUD"],5) if rates.get("AUD") else 0, "var": 0},
-                "USD/CNY":   {"preco": rates.get("CNY",0), "var": 0},
+                "_EUR/USD_fb":   {"preco": round(1/rates["EUR"],5) if rates.get("EUR") else 0, "var": 0},
+                "_GBP/USD_fb":   {"preco": round(1/rates["GBP"],5) if rates.get("GBP") else 0, "var": 0},
+                "_USD/JPY_fb":   {"preco": rates.get("JPY",0), "var": 0},
+                "_AUD/USD_fb":   {"preco": round(1/rates["AUD"],5) if rates.get("AUD") else 0, "var": 0},
+                "_USD/CNY_fb":   {"preco": rates.get("CNY",0), "var": 0},
             }
     except:
         pass
@@ -188,6 +188,11 @@ def _fetch_cripto():
 YF_MAP = {
     "IBOVESPA":      "^BVSP",
     "Dólar/BRL":     "BRL=X",
+    "EUR/USD":       "EURUSD=X",
+    "GBP/USD":       "GBPUSD=X",
+    "USD/JPY":       "JPY=X",
+    "AUD/USD":       "AUDUSD=X",
+    "USD/CNY":       "CNY=X",
     "S&P 500":       "^GSPC",
     "Nasdaq":        "^IXIC",
     "DAX":           "^GDAXI",
@@ -294,10 +299,15 @@ def buscar_cotacoes():
 
     ex.shutdown(wait=False)
 
-    # Dólar/BRL: usa fallback do Frankfurter só se yfinance não trouxe
-    if "Dólar/BRL" not in resultado and "_Dólar/BRL_fb" in resultado:
-        resultado["Dólar/BRL"] = resultado["_Dólar/BRL_fb"]
-    resultado.pop("_Dólar/BRL_fb", None)
+    # Câmbio: usa fallback do Frankfurter só para pares que o yfinance não trouxe
+    for par in ("Dólar/BRL","EUR/USD","GBP/USD","USD/JPY","AUD/USD","USD/CNY"):
+        fb_key = f"_{par}_fb"
+        if par not in resultado and fb_key in resultado:
+            resultado[par] = resultado[fb_key]
+    # Remove as chaves de fallback
+    for k in list(resultado.keys()):
+        if k.startswith("_") and k.endswith("_fb"):
+            resultado.pop(k, None)
 
     # WINFUT — espelha IBOV (índice à vista; futuro anda colado)
     if "IBOVESPA" in resultado:
@@ -730,7 +740,7 @@ TICKER_ATIVOS = [
     "IBOVESPA", "WINFUT", "WDOFUT",
     "S&P 500", "Nasdaq", "DAX", "Nikkei",
     "Petróleo WTI", "Ouro",
-    "Dólar/BRL", "EUR/USD",
+    "Dólar/BRL", "EUR/USD", "GBP/USD", "USD/JPY",
     "Bitcoin", "Ethereum",
 ]
 
@@ -795,7 +805,7 @@ with tab1:
         ("🇧🇷 Brasil",     ["WINFUT", "WDOFUT"]),
         ("🌎 Global",      ["S&P 500", "Nasdaq", "DAX", "Nikkei"]),
         ("🛢️ Commodities",["Petróleo WTI", "Ouro"]),
-        ("💱 Câmbio",      ["Dólar/BRL", "EUR/USD", "GBP/USD", "USD/JPY"]),
+        ("💱 Forex",       ["Dólar/BRL", "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CNY"]),
         ("₿ Cripto",       ["Bitcoin", "Ethereum", "Solana", "BNB"]),
     ]
 
