@@ -68,10 +68,17 @@ STOOQ_MAP = {
     "S&P 500":        "^spx",
     "Nasdaq":         "^ndx",
     "DAX":            "^dax",
-    "FTSE 100":       "^ftse",
+    "FTSE 100":       "^ftx",
     "Nikkei":         "^nkx",
     "Petróleo WTI":   "cl.f",
     "Ouro":           "gc.f",
+}
+
+# Símbolos alternativos para fallback (Yahoo Finance via yfinance-like URL)
+STOOQ_ALT = {
+    "IBOVESPA":       "bvsp.b",
+    "FTSE 100":       "^ftse",
+    "Nikkei":         "^n225",
 }
 CRIPTO_IDS = {
     "Bitcoin":  "bitcoin",
@@ -80,37 +87,39 @@ CRIPTO_IDS = {
     "BNB":      "binancecoin",
 }
 
-def _fetch_stooq(nome_sym):
-    """Busca UM ativo no Stooq — retorna OHLCV completo."""
-    nome, sym = nome_sym
+def _stooq_csv(sym, timeout=5):
+    """Busca CSV do Stooq e retorna dict OHLCV ou None."""
     hdrs = {"User-Agent": "Mozilla/5.0"}
     try:
-        # f=sd2t2ohlcvn → Symbol,Date,Time,Open,High,Low,Close,Volume,Name
         url = f"https://stooq.com/q/l/?s={sym}&f=sd2t2ohlcvn&h&e=csv"
-        r = requests.get(url, headers=hdrs, timeout=5)
+        r = requests.get(url, headers=hdrs, timeout=timeout)
         lines = r.text.strip().split("\n")
         if len(lines) >= 2:
             cols = lines[1].split(",")
-            if len(cols) >= 8:
-                def safe(v): return float(v) if v not in ("N/D","","0") else 0
+            if len(cols) >= 7:
+                def safe(v): return float(v) if v not in ("N/D","","0","N/A") else 0
                 open_  = safe(cols[3])
                 high   = safe(cols[4])
                 low    = safe(cols[5])
                 close  = safe(cols[6])
-                volume = safe(cols[7])
-                var    = round(((close - open_) / open_ * 100), 2) if open_ else 0
-                if close:
-                    return nome, {
-                        "preco":  close,
-                        "var":    var,
-                        "open":   open_,
-                        "high":   high,
-                        "low":    low,
-                        "volume": volume,
-                    }
+                volume = safe(cols[7]) if len(cols) > 7 else 0
+                var    = round(((close - open_) / open_ * 100), 2) if open_ and close else 0
+                if close and close > 0:
+                    return {"preco": close, "var": var, "open": open_,
+                            "high": high, "low": low, "volume": volume}
     except:
         pass
-    return nome, None
+    return None
+
+def _fetch_stooq(nome_sym):
+    """Busca UM ativo no Stooq com fallback de símbolo."""
+    nome, sym = nome_sym
+    # Tenta símbolo principal
+    dados = _stooq_csv(sym)
+    # Tenta alternativo se falhou
+    if not dados and nome in STOOQ_ALT:
+        dados = _stooq_csv(STOOQ_ALT[nome])
+    return nome, dados
 
 def _fetch_forex():
     hdrs = {"User-Agent": "Mozilla/5.0"}
@@ -189,27 +198,43 @@ def buscar_cotacoes():
 
     return resultado
 
-# ── NOTÍCIAS — RSS com filtro de qualidade ────────────────────────────────────
-DOMINIOS_OK = {"infomoney.com.br","valor.globo.com","reuters.com","exame.com",
-               "moneytimes.com.br","investing.com","b3.com.br","cnnbrasil.com.br",
-               "globo.com","estadao.com.br","folha.uol.com.br"}
-
+# ── NOTÍCIAS — RSS com filtro financeiro rígido ──────────────────────────────
 FEEDS_RSS = [
-    ("InfoMoney",    "https://www.infomoney.com.br/feed/"),
-    ("Reuters BR",   "https://feeds.reuters.com/reuters/BRbusinessNews"),
-    ("Exame",        "https://exame.com/feed/"),
-    ("Money Times",  "https://www.moneytimes.com.br/feed/"),
-    ("CNN Brasil",   "https://www.cnnbrasil.com.br/economy/feed/"),
+    ("InfoMoney",  "https://www.infomoney.com.br/feed/"),
+    ("Reuters BR", "https://feeds.reuters.com/reuters/BRbusinessNews"),
+    ("Exame",      "https://exame.com/feed/"),
+    ("MoneyTimes", "https://www.moneytimes.com.br/feed/"),
+    ("CNN Brasil", "https://www.cnnbrasil.com.br/economy/feed/"),
 ]
 
-QUERY_PADRAO = "Ibovespa dólar B3 mercado futuro WIN WDO"
+TERMOS_FIN = {
+    "ibovespa","ibov","bovespa","b3","bolsa","ações","mercado","índice",
+    "dólar","dollar","câmbio","real","brl","cotação",
+    "win","wdo","futuro","futuros","mini-índice","mini-dólar",
+    "juros","selic","ipca","inflação","pib","economia","fiscal","copom",
+    "fed","fomc","banco central","bcb","taxa básica",
+    "petróleo","ouro","commodity","commodities",
+    "bitcoin","btc","ethereum","cripto",
+    "s&p","nasdaq","dow jones","nikkei","dax","ftse",
+    "alta","baixa","queda","valoriza","desvalori","recua","sobe","cai",
+    "pregão","abertura","fechamento","resultado","lucro","balanço","dividendo",
+    "ação","ativo","investimento","investidor","trader","operação",
+}
+TERMOS_REJEITAR = {
+    "futebol","gol","copa","campeonato","jogador","clube","esporte",
+    "tênis","roland garros","wimbledon","fórmula 1","motogp","ciclismo","olimp",
+    "cantor","música","show","cinema","série","novela","ator","atriz","celebridade",
+    "receita culinária","viagem","turismo","moda","beleza","saúde",
+    "crime","polícia","acidente","violência",
+    "djokovic","fonseca","neymar","messi","ronaldo","lebron",
+}
 
 @st.cache_data(ttl=120)
 def buscar_noticias_rss(query=""):
     artigos = []
-    hdrs = {"User-Agent": "Mozilla/5.0 (compatible; newsbot/1.0)"}
-    q_lower = (query or QUERY_PADRAO).lower()
-    termos  = [t for t in q_lower.split() if len(t) > 2]
+    hdrs    = {"User-Agent": "Mozilla/5.0 (compatible; newsbot/1.0)"}
+    q_lower = query.strip().lower()
+    termos_busca = [t for t in q_lower.split() if len(t) > 2] if q_lower else []
 
     for fonte, feed_url in FEEDS_RSS:
         try:
@@ -218,7 +243,7 @@ def buscar_noticias_rss(query=""):
                 continue
             root = ET.fromstring(r.content)
             ch   = root.find("channel") or root
-            for item in (ch.findall("item") or [])[:8]:
+            for item in (ch.findall("item") or [])[:10]:
                 titulo = (item.findtext("title") or "").strip()
                 desc   = re.sub(r"<[^>]+>", "", item.findtext("description") or "").strip()[:220]
                 link   = (item.findtext("link") or "#").strip()
@@ -227,47 +252,43 @@ def buscar_noticias_rss(query=""):
                 if not titulo or len(titulo) < 10:
                     continue
 
-                # Filtra domínio — rejeita lixo
-                dominio = re.search(r"https?://([^/]+)", link)
-                if dominio:
-                    dom = dominio.group(1).replace("www.","")
-                    dom_ok = any(ok in dom for ok in DOMINIOS_OK)
+                tit_low  = titulo.lower()
+                txt_low  = tit_low + " " + desc.lower()
+
+                # Rejeita por palavras proibidas no TÍTULO
+                if any(t in tit_low for t in TERMOS_REJEITAR):
+                    continue
+
+                if termos_busca:
+                    # Busca específica: ao menos 1 termo da busca
+                    if not any(t in txt_low for t in termos_busca):
+                        continue
                 else:
-                    dom_ok = True  # sem link, aceita pelo nome da fonte
+                    # Sem busca: exige ao menos 1 termo financeiro
+                    if not any(t in txt_low for t in TERMOS_FIN):
+                        continue
 
-                if not dom_ok:
-                    continue
-
-                # Filtra por relevância financeira
-                txt_busca = (titulo + " " + desc).lower()
-                tem_termo = any(t in txt_busca for t in termos)
-                if not tem_termo and query:
-                    continue
-
-                artigos.append({
-                    "title": titulo,
-                    "desc":  desc,
-                    "url":   link,
-                    "fonte": fonte,
-                    "pub":   pub,
-                })
+                artigos.append({"title": titulo, "desc": desc,
+                                "url": link, "fonte": fonte, "pub": pub})
         except:
             continue
 
-    # Fallback NewsAPI se não veio nada dos RSS
+    # Fallback NewsAPI
     if not artigos:
         try:
-            q = query or "Ibovespa B3 dólar futuro"
+            q = query or "Ibovespa B3 dólar mercado futuro"
             url = f"https://newsapi.org/v2/everything?q={q}&language=pt&sortBy=publishedAt&pageSize=10&apiKey={NEWS_KEY}"
             r = requests.get(url, timeout=8)
             for n in r.json().get("articles", []):
-                artigos.append({
-                    "title": n.get("title",""),
-                    "desc":  (n.get("description") or "")[:220],
-                    "url":   n.get("url","#"),
-                    "fonte": n.get("source",{}).get("name",""),
-                    "pub":   n.get("publishedAt","")[:16],
-                })
+                t = n.get("title","")
+                if t and not any(x in t.lower() for x in TERMOS_REJEITAR):
+                    artigos.append({
+                        "title": t,
+                        "desc":  (n.get("description") or "")[:220],
+                        "url":   n.get("url","#"),
+                        "fonte": n.get("source",{}).get("name",""),
+                        "pub":   n.get("publishedAt","")[:16],
+                    })
         except:
             pass
 
