@@ -162,40 +162,91 @@ def _fetch_cripto():
         pass
     return {}
 
+# ── yfinance — fonte robusta para índices/commodities ─────────────────────────
+YF_MAP = {
+    "IBOVESPA":      "^BVSP",
+    "S&P 500":       "^GSPC",
+    "Nasdaq":        "^IXIC",
+    "DAX":           "^GDAXI",
+    "FTSE 100":      "^FTSE",
+    "Nikkei":        "^N225",
+    "Petróleo WTI":  "CL=F",
+    "Ouro":          "GC=F",
+}
+
+def _fetch_yfinance():
+    """Busca índices via yfinance. WIN/WDO derivados de IBOV/Dólar."""
+    out = {}
+    try:
+        import yfinance as yf
+        simbolos = list(YF_MAP.values())
+        data = yf.download(simbolos, period="2d", interval="1d",
+                           progress=False, group_by="ticker", threads=True)
+        for nome, sym in YF_MAP.items():
+            try:
+                df = data[sym] if len(simbolos) > 1 else data
+                df = df.dropna()
+                if len(df) >= 1:
+                    close = float(df["Close"].iloc[-1])
+                    open_ = float(df["Open"].iloc[-1])
+                    high  = float(df["High"].iloc[-1])
+                    low   = float(df["Low"].iloc[-1])
+                    vol   = float(df["Volume"].iloc[-1]) if "Volume" in df else 0
+                    # variação vs fechamento anterior se houver
+                    if len(df) >= 2:
+                        prev = float(df["Close"].iloc[-2])
+                        var = round((close - prev) / prev * 100, 2) if prev else 0
+                    else:
+                        var = round((close - open_) / open_ * 100, 2) if open_ else 0
+                    if close:
+                        out[nome] = {"preco": close, "var": var, "open": open_,
+                                     "high": high, "low": low, "volume": vol}
+            except:
+                continue
+    except:
+        pass
+    return out
+
 @st.cache_data(ttl=90)
 def buscar_cotacoes():
-    from concurrent.futures import ThreadPoolExecutor, as_completed, wait
+    from concurrent.futures import ThreadPoolExecutor, wait
     resultado = {}
 
-    todos_stooq = list(STOOQ_MAP.items()) + [
-        ("WIN (Mini-Índ.)", "winm25.sa"),
-        ("WDO (Mini-Dól.)",  "wdom25.sa"),
-    ]
-
-    ex = ThreadPoolExecutor(max_workers=14)
-    futs_stooq = {ex.submit(_fetch_stooq, ns): ns for ns in todos_stooq}
+    ex = ThreadPoolExecutor(max_workers=6)
+    fut_yf     = ex.submit(_fetch_yfinance)
     fut_forex  = ex.submit(_fetch_forex)
     fut_cripto = ex.submit(_fetch_cripto)
 
-    todas = list(futs_stooq.keys()) + [fut_forex, fut_cripto]
-
-    # TIMEOUT TOTAL RÍGIDO: espera no máximo 5 segundos por TUDO
-    done, not_done = wait(todas, timeout=5)
+    todas = [fut_yf, fut_forex, fut_cripto]
+    done, _ = wait(todas, timeout=12)
 
     for fut in done:
         try:
             res = fut.result(timeout=0.1)
-            if fut in futs_stooq:
-                nome, dados = res
-                if dados:
-                    resultado[nome] = dados
-            elif isinstance(res, dict):
+            if isinstance(res, dict):
                 resultado.update({k: v for k, v in res.items() if v and v.get("preco")})
         except:
             pass
 
-    # Não espera as threads pendentes — cancela e segue
     ex.shutdown(wait=False)
+
+    # WIN e WDO derivados (andam colados ao IBOV e ao Dólar) — valores aproximados
+    if "IBOVESPA" in resultado:
+        ibov = resultado["IBOVESPA"]
+        resultado["WIN (Mini-Índ.)"] = {
+            "preco": round(ibov["preco"], 0), "var": ibov["var"],
+            "open": ibov.get("open",0), "high": ibov.get("high",0),
+            "low": ibov.get("low",0), "volume": ibov.get("volume",0),
+            "aprox": True,
+        }
+    if "Dólar/BRL" in resultado:
+        dol = resultado["Dólar/BRL"]
+        resultado["WDO (Mini-Dól.)"] = {
+            "preco": round(dol["preco"] * 1000, 1), "var": dol.get("var",0),
+            "open": 0, "high": 0, "low": 0, "volume": 0,
+            "aprox": True,
+        }
+
     return resultado
 
 # ── NOTÍCIAS — RSS de mercado/economia, busca paralela ───────────────────────
