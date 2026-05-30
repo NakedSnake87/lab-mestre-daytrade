@@ -278,6 +278,23 @@ def _tempo_relativo(dt):
     if seg < 86400:  return f"há {int(seg//3600)} h"
     return dt.strftime("%d/%m %H:%M")
 
+def _limpar_html(texto):
+    """Limpa HTML do RSS: desescapa entidades, remove tags, remove rodapé 'The post...'."""
+    if not texto:
+        return ""
+    # Desescapa entidades (&lt; vira <, &amp; vira &, etc) — 2x por segurança
+    texto = html_mod.unescape(html_mod.unescape(texto))
+    # Remove blocos CDATA
+    texto = re.sub(r"<!\[CDATA\[|\]\]>", "", texto)
+    # Remove todas as tags HTML
+    texto = re.sub(r"<[^>]+>", " ", texto)
+    # Remove rodapé padrão do WordPress "The post ... appeared first on ..."
+    texto = re.sub(r"The post .*?appeared first on.*", "", texto, flags=re.IGNORECASE|re.DOTALL)
+    texto = re.sub(r"The post .*", "", texto, flags=re.IGNORECASE)
+    # Normaliza espaços
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto
+
 def _fetch_feed(fonte_url):
     fonte, feed_url = fonte_url
     out  = []
@@ -289,8 +306,8 @@ def _fetch_feed(fonte_url):
         root = ET.fromstring(r.content)
         ch   = root.find("channel") or root
         for item in (ch.findall("item") or [])[:12]:
-            titulo = (item.findtext("title") or "").strip()
-            desc   = re.sub(r"<[^>]+>", "", item.findtext("description") or "").strip()[:200]
+            titulo = _limpar_html(item.findtext("title") or "")
+            desc   = _limpar_html(item.findtext("description") or "")[:200]
             link   = (item.findtext("link") or "#").strip()
             pub    = (item.findtext("pubDate") or "").strip()
             if titulo and len(titulo) >= 10:
@@ -477,6 +494,23 @@ html,body,[data-testid="stAppViewContainer"]{background:#0a0e1a!important;color:
 .ativo-var-dn{font-size:.74rem;color:#ef4444;font-weight:600;margin-top:.2rem}
 .ativo-var-nt{font-size:.74rem;color:#94a3b8;margin-top:.2rem}
 
+/* ── GRADE DE COTAÇÕES (estilo Profit) ── */
+.grade-wrap{margin-bottom:.5rem}
+.grade-grupo-label{font-size:.68rem;font-weight:700;color:#64748b;text-transform:uppercase;
+    letter-spacing:.08em;margin:.7rem 0 .35rem}
+.grade-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.4rem;margin-bottom:.3rem}
+.grade-cel{border-radius:8px;padding:.5rem .7rem;border:1px solid transparent;
+    display:flex;flex-direction:column;gap:.1rem;transition:all .15s}
+.grade-cel:hover{transform:translateY(-1px);filter:brightness(1.15)}
+.grade-up{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.35)}
+.grade-dn{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35)}
+.grade-nt{background:#0f172a;border-color:#1e293b}
+.grade-nome{font-size:.64rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grade-preco{font-size:1.05rem;font-weight:700;color:#f1f5f9;font-family:'JetBrains Mono',monospace;line-height:1.1}
+.grade-up .grade-var{font-size:.72rem;font-weight:700;color:#22c55e;font-family:'JetBrains Mono',monospace}
+.grade-dn .grade-var{font-size:.72rem;font-weight:700;color:#ef4444;font-family:'JetBrains Mono',monospace}
+.grade-nt .grade-var{font-size:.72rem;font-weight:600;color:#64748b}
+
 /* ── UTILITÁRIOS ── */
 .sec-title{font-size:1.05rem;font-weight:700;color:#f1f5f9;margin:1.2rem 0 .7rem;display:flex;align-items:center;gap:.5rem}
 .sec-divider{height:1px;background:#1e293b;margin:.8rem 0}
@@ -615,9 +649,42 @@ with tab1:
     with col_info:
         st.markdown("<div style='color:#475569;font-size:.75rem;padding-top:.55rem'>Stooq · CoinGecko · Frankfurter · atualiza a cada 90s</div>", unsafe_allow_html=True)
 
-    # ── PAINEL DE DETALHE — seletor de ativo ─────────────────────────────────
-    st.markdown('<div class="sec-title">🔍 Detalhe do Ativo</div>', unsafe_allow_html=True)
+    # ── GRADE DE COTAÇÕES estilo Profit (mapa de mercado) ────────────────────
+    st.markdown('<div class="sec-title">📊 Cotações</div>', unsafe_allow_html=True)
 
+    GRUPOS_GRADE = [
+        ("🇧🇷 Brasil",     ["IBOVESPA", "WIN (Mini-Índ.)", "WDO (Mini-Dól.)"]),
+        ("🌎 Global",      ["S&P 500", "Nasdaq", "DAX", "Nikkei"]),
+        ("🛢️ Commodities",["Petróleo WTI", "Ouro"]),
+        ("💱 Câmbio",      ["Dólar/BRL", "EUR/USD", "GBP/USD", "USD/JPY"]),
+        ("₿ Cripto",       ["Bitcoin", "Ethereum", "Solana", "BNB"]),
+    ]
+
+    def celula_grade(nome, dados):
+        p = dados.get("preco", 0) if dados else 0
+        v = dados.get("var",   0) if dados else 0
+        if not p:
+            return f'''<div class="grade-cel grade-nt">
+                <div class="grade-nome">{nome}</div>
+                <div class="grade-preco">—</div>
+                <div class="grade-var">s/ dado</div></div>'''
+        cls = "grade-up" if v > 0 else "grade-dn" if v < 0 else "grade-nt"
+        seta = "▲" if v > 0 else "▼" if v < 0 else "—"
+        return f'''<div class="grade-cel {cls}">
+            <div class="grade-nome">{nome}</div>
+            <div class="grade-preco">{fmt_preco(p)}</div>
+            <div class="grade-var">{seta} {abs(v):.2f}%</div></div>'''
+
+    grade_html = '<div class="grade-wrap">'
+    for gnome, ativos_g in GRUPOS_GRADE:
+        grade_html += f'<div class="grade-grupo-label">{gnome}</div><div class="grade-row">'
+        grade_html += "".join(celula_grade(a, cotacoes.get(a)) for a in ativos_g)
+        grade_html += '</div>'
+    grade_html += '</div>'
+    st.markdown(grade_html, unsafe_allow_html=True)
+
+    # ── DETALHE expandido (abertura/máxima/mínima/volume) ────────────────────
+    st.markdown('<div class="sec-title" style="font-size:.95rem;margin-top:1rem">🔍 Detalhe do Ativo</div>', unsafe_allow_html=True)
     TODOS_ATIVOS_LISTA = [
         "IBOVESPA", "WIN (Mini-Índ.)", "WDO (Mini-Dól.)",
         "S&P 500", "Nasdaq", "DAX", "FTSE 100", "Nikkei",
@@ -625,53 +692,51 @@ with tab1:
         "Dólar/BRL", "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CNY",
         "Bitcoin", "Ethereum", "Solana", "BNB",
     ]
-
-    col_sel, col_space = st.columns([2, 3])
+    col_sel, _ = st.columns([2, 3])
     with col_sel:
         ativo_detalhe = st.selectbox("Escolha o ativo", TODOS_ATIVOS_LISTA, label_visibility="collapsed")
 
     dados_d = cotacoes.get(ativo_detalhe, {})
-    preco_d  = dados_d.get("preco", 0)
-    var_d    = dados_d.get("var",   0)
-    open_d   = dados_d.get("open",  0)
-    high_d   = dados_d.get("high",  0)
-    low_d    = dados_d.get("low",   0)
-    vol_d    = dados_d.get("volume",0)
+    preco_d = dados_d.get("preco", 0)
+    var_d   = dados_d.get("var",   0)
+    open_d  = dados_d.get("open",  0)
+    high_d  = dados_d.get("high",  0)
+    low_d   = dados_d.get("low",   0)
+    vol_d   = dados_d.get("volume",0)
 
     if preco_d:
-        cor_var  = "#22c55e" if var_d > 0 else "#ef4444" if var_d < 0 else "#94a3b8"
-        seta     = "▲" if var_d > 0 else "▼" if var_d < 0 else "—"
-        vol_fmt  = f"{vol_d:,.0f}".replace(",",".") if vol_d else "—"
-
+        cor_var = "#22c55e" if var_d > 0 else "#ef4444" if var_d < 0 else "#94a3b8"
+        seta    = "▲" if var_d > 0 else "▼" if var_d < 0 else "—"
+        vol_fmt = f"{vol_d:,.0f}".replace(",",".") if vol_d else "—"
         st.markdown(f"""
-        <div style="background:#0f172a;border:1px solid #1e293b;border-radius:14px;padding:1.2rem 1.5rem;margin-bottom:1rem">
-          <div style="display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;margin-bottom:.9rem">
-            <div style="font-size:1.8rem;font-weight:700;color:#f1f5f9;font-family:'JetBrains Mono',monospace">{fmt_preco(preco_d)}</div>
-            <div style="font-size:1rem;font-weight:700;color:{cor_var}">{seta} {abs(var_d):.2f}%</div>
-            <div style="font-size:.8rem;color:#475569;margin-left:auto">{ativo_detalhe} · Hoje</div>
+        <div style="background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:1rem 1.3rem;margin-bottom:1rem">
+          <div style="display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;margin-bottom:.8rem">
+            <div style="font-size:1.6rem;font-weight:700;color:#f1f5f9;font-family:'JetBrains Mono',monospace">{fmt_preco(preco_d)}</div>
+            <div style="font-size:.95rem;font-weight:700;color:{cor_var}">{seta} {abs(var_d):.2f}%</div>
+            <div style="font-size:.78rem;color:#475569;margin-left:auto">{ativo_detalhe}</div>
           </div>
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.6rem">
-            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.55rem .8rem">
-              <div style="font-size:.62rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem">Abertura</div>
-              <div style="font-size:.9rem;font-weight:600;color:#f1f5f9;font-family:'JetBrains Mono',monospace">{fmt_preco(open_d) if open_d else '—'}</div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem">
+            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.5rem .7rem">
+              <div style="font-size:.6rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.15rem">Abertura</div>
+              <div style="font-size:.85rem;font-weight:600;color:#f1f5f9;font-family:'JetBrains Mono',monospace">{fmt_preco(open_d) if open_d else '—'}</div>
             </div>
-            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.55rem .8rem">
-              <div style="font-size:.62rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem">Máxima</div>
-              <div style="font-size:.9rem;font-weight:600;color:#22c55e;font-family:'JetBrains Mono',monospace">{fmt_preco(high_d) if high_d else '—'}</div>
+            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.5rem .7rem">
+              <div style="font-size:.6rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.15rem">Máxima</div>
+              <div style="font-size:.85rem;font-weight:600;color:#22c55e;font-family:'JetBrains Mono',monospace">{fmt_preco(high_d) if high_d else '—'}</div>
             </div>
-            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.55rem .8rem">
-              <div style="font-size:.62rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem">Mínima</div>
-              <div style="font-size:.9rem;font-weight:600;color:#ef4444;font-family:'JetBrains Mono',monospace">{fmt_preco(low_d) if low_d else '—'}</div>
+            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.5rem .7rem">
+              <div style="font-size:.6rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.15rem">Mínima</div>
+              <div style="font-size:.85rem;font-weight:600;color:#ef4444;font-family:'JetBrains Mono',monospace">{fmt_preco(low_d) if low_d else '—'}</div>
             </div>
-            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.55rem .8rem">
-              <div style="font-size:.62rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem">Volume</div>
-              <div style="font-size:.9rem;font-weight:600;color:#f1f5f9;font-family:'JetBrains Mono',monospace">{vol_fmt}</div>
+            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.5rem .7rem">
+              <div style="font-size:.6rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.15rem">Volume</div>
+              <div style="font-size:.85rem;font-weight:600;color:#f1f5f9;font-family:'JetBrains Mono',monospace">{vol_fmt}</div>
             </div>
           </div>
         </div>
         """, unsafe_allow_html=True)
     else:
-        st.markdown(f'<div style="background:#0f172a;border:1px solid #1e293b;border-radius:14px;padding:1.2rem 1.5rem;color:#475569;font-size:.85rem;margin-bottom:1rem">⏳ Aguardando dados de <b>{ativo_detalhe}</b>… Clique em Atualizar.</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:1rem 1.3rem;color:#475569;font-size:.83rem;margin-bottom:1rem">⏳ Aguardando dados de <b>{ativo_detalhe}</b>… Clique em Atualizar.</div>', unsafe_allow_html=True)
 
     # ── NOTÍCIAS ──────────────────────────────────────────────────────────────
     st.markdown('<div class="sec-divider"></div><div class="sec-title">📺 Central de Notícias — Mercado ao Vivo</div>', unsafe_allow_html=True)
