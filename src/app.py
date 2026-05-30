@@ -130,7 +130,8 @@ def _fetch_forex():
         if r.status_code == 200:
             rates = r.json().get("rates", {})
             return {
-                "Dólar/BRL": {"preco": rates.get("BRL",0), "var": 0},
+                # Dólar/BRL fica como fallback (yfinance é a fonte primária com variações)
+                "_Dólar/BRL_fb": {"preco": rates.get("BRL",0), "var": 0},
                 "EUR/USD":   {"preco": round(1/rates["EUR"],5) if rates.get("EUR") else 0, "var": 0},
                 "GBP/USD":   {"preco": round(1/rates["GBP"],5) if rates.get("GBP") else 0, "var": 0},
                 "USD/JPY":   {"preco": rates.get("JPY",0), "var": 0},
@@ -162,9 +163,10 @@ def _fetch_cripto():
         pass
     return {}
 
-# ── yfinance — fonte robusta para índices/commodities ─────────────────────────
+# ── yfinance — fonte robusta com variações por período ────────────────────────
 YF_MAP = {
     "IBOVESPA":      "^BVSP",
+    "Dólar/BRL":     "BRL=X",
     "S&P 500":       "^GSPC",
     "Nasdaq":        "^IXIC",
     "DAX":           "^GDAXI",
@@ -174,13 +176,38 @@ YF_MAP = {
     "Ouro":          "GC=F",
 }
 
+def _variacoes_periodo(serie_close):
+    """Calcula variação %: dia, semana, mês, ano a partir de uma série de fechamentos."""
+    import math
+    if serie_close is None or len(serie_close) < 1:
+        return {}
+    closes = [float(c) for c in serie_close if c and not math.isnan(c)]
+    if len(closes) < 1:
+        return {}
+    atual = closes[-1]
+    def var_n(n):
+        if len(closes) > n:
+            ref = closes[-(n+1)]
+            return round((atual - ref) / ref * 100, 2) if ref else None
+        elif len(closes) >= 2:
+            ref = closes[0]
+            return round((atual - ref) / ref * 100, 2) if ref else None
+        return None
+    return {
+        "var_dia":    var_n(1),    # vs ontem
+        "var_semana": var_n(5),    # ~5 pregões
+        "var_mes":    var_n(22),   # ~22 pregões
+        "var_ano":    var_n(252),  # ~252 pregões
+    }
+
 def _fetch_yfinance():
-    """Busca índices via yfinance. WIN/WDO derivados de IBOV/Dólar."""
+    """Busca índices via yfinance com histórico de 1 ano (p/ variações de período)."""
     out = {}
     try:
         import yfinance as yf
         simbolos = list(YF_MAP.values())
-        data = yf.download(simbolos, period="2d", interval="1d",
+        # 1 ano de histórico para calcular variações de período
+        data = yf.download(simbolos, period="1y", interval="1d",
                            progress=False, group_by="ticker", threads=True)
         for nome, sym in YF_MAP.items():
             try:
@@ -192,15 +219,13 @@ def _fetch_yfinance():
                     high  = float(df["High"].iloc[-1])
                     low   = float(df["Low"].iloc[-1])
                     vol   = float(df["Volume"].iloc[-1]) if "Volume" in df else 0
-                    # variação vs fechamento anterior se houver
-                    if len(df) >= 2:
-                        prev = float(df["Close"].iloc[-2])
-                        var = round((close - prev) / prev * 100, 2) if prev else 0
-                    else:
-                        var = round((close - open_) / open_ * 100, 2) if open_ else 0
+                    vars_ = _variacoes_periodo(df["Close"].tolist())
+                    var = vars_.get("var_dia") or 0
                     if close:
-                        out[nome] = {"preco": close, "var": var, "open": open_,
-                                     "high": high, "low": low, "volume": vol}
+                        d = {"preco": close, "var": var, "open": open_,
+                             "high": high, "low": low, "volume": vol}
+                        d.update(vars_)
+                        out[nome] = d
             except:
                 continue
     except:
@@ -218,7 +243,7 @@ def buscar_cotacoes():
     fut_cripto = ex.submit(_fetch_cripto)
 
     todas = [fut_yf, fut_forex, fut_cripto]
-    done, _ = wait(todas, timeout=12)
+    done, _ = wait(todas, timeout=14)
 
     for fut in done:
         try:
@@ -230,22 +255,33 @@ def buscar_cotacoes():
 
     ex.shutdown(wait=False)
 
-    # WIN e WDO derivados (andam colados ao IBOV e ao Dólar) — valores aproximados
+    # Dólar/BRL: usa fallback do Frankfurter só se yfinance não trouxe
+    if "Dólar/BRL" not in resultado and "_Dólar/BRL_fb" in resultado:
+        resultado["Dólar/BRL"] = resultado["_Dólar/BRL_fb"]
+    resultado.pop("_Dólar/BRL_fb", None)
+
+    # WINFUT — espelha IBOV (índice à vista; futuro anda colado)
     if "IBOVESPA" in resultado:
         ibov = resultado["IBOVESPA"]
-        resultado["WIN (Mini-Índ.)"] = {
-            "preco": round(ibov["preco"], 0), "var": ibov["var"],
-            "open": ibov.get("open",0), "high": ibov.get("high",0),
-            "low": ibov.get("low",0), "volume": ibov.get("volume",0),
-            "aprox": True,
-        }
+        resultado["WINFUT"] = dict(ibov)
+        resultado["WINFUT"]["aprox"] = True
+
+    # WDOFUT — Dólar × 1000 (mini-dólar)
     if "Dólar/BRL" in resultado:
         dol = resultado["Dólar/BRL"]
-        resultado["WDO (Mini-Dól.)"] = {
-            "preco": round(dol["preco"] * 1000, 1), "var": dol.get("var",0),
-            "open": 0, "high": 0, "low": 0, "volume": 0,
-            "aprox": True,
+        wdo = {
+            "preco": round(dol["preco"] * 1000, 1),
+            "var":   dol.get("var", 0),
+            "open": round(dol.get("open",0)*1000,1) if dol.get("open") else 0,
+            "high": round(dol.get("high",0)*1000,1) if dol.get("high") else 0,
+            "low":  round(dol.get("low",0)*1000,1) if dol.get("low") else 0,
+            "volume": 0, "aprox": True,
         }
+        # herda variações de período do dólar
+        for k in ("var_dia","var_semana","var_mes","var_ano"):
+            if k in dol:
+                wdo[k] = dol[k]
+        resultado["WDOFUT"] = wdo
 
     return resultado
 
@@ -562,6 +598,12 @@ html,body,[data-testid="stAppViewContainer"]{background:#0a0e1a!important;color:
 .grade-dn .grade-var{font-size:.72rem;font-weight:700;color:#ef4444;font-family:'JetBrains Mono',monospace}
 .grade-nt .grade-var{font-size:.72rem;font-weight:600;color:#64748b}
 
+/* ── VARIAÇÕES POR PERÍODO ── */
+.var-per-row{display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem}
+.var-per{background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.5rem .7rem;text-align:center}
+.var-per-lbl{font-size:.6rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem}
+.var-per-val{font-size:.92rem;font-weight:700;font-family:'JetBrains Mono',monospace}
+
 /* ── UTILITÁRIOS ── */
 .sec-title{font-size:1.05rem;font-weight:700;color:#f1f5f9;margin:1.2rem 0 .7rem;display:flex;align-items:center;gap:.5rem}
 .sec-divider{height:1px;background:#1e293b;margin:.8rem 0}
@@ -639,7 +681,7 @@ cotacoes = buscar_cotacoes()
 
 # ── TICKER TAPE ───────────────────────────────────────────────────────────────
 TICKER_ATIVOS = [
-    "IBOVESPA", "WIN (Mini-Índ.)", "WDO (Mini-Dól.)",
+    "IBOVESPA", "WINFUT", "WDOFUT",
     "S&P 500", "Nasdaq", "DAX", "Nikkei",
     "Petróleo WTI", "Ouro",
     "Dólar/BRL", "EUR/USD",
@@ -704,7 +746,7 @@ with tab1:
     st.markdown('<div class="sec-title">📊 Cotações</div>', unsafe_allow_html=True)
 
     GRUPOS_GRADE = [
-        ("🇧🇷 Brasil",     ["IBOVESPA", "WIN (Mini-Índ.)", "WDO (Mini-Dól.)"]),
+        ("🇧🇷 Brasil",     ["WINFUT", "WDOFUT"]),
         ("🌎 Global",      ["S&P 500", "Nasdaq", "DAX", "Nikkei"]),
         ("🛢️ Commodities",["Petróleo WTI", "Ouro"]),
         ("💱 Câmbio",      ["Dólar/BRL", "EUR/USD", "GBP/USD", "USD/JPY"]),
@@ -737,7 +779,7 @@ with tab1:
     # ── DETALHE expandido (abertura/máxima/mínima/volume) ────────────────────
     st.markdown('<div class="sec-title" style="font-size:.95rem;margin-top:1rem">🔍 Detalhe do Ativo</div>', unsafe_allow_html=True)
     TODOS_ATIVOS_LISTA = [
-        "IBOVESPA", "WIN (Mini-Índ.)", "WDO (Mini-Dól.)",
+        "WINFUT", "WDOFUT", "IBOVESPA",
         "S&P 500", "Nasdaq", "DAX", "FTSE 100", "Nikkei",
         "Petróleo WTI", "Ouro",
         "Dólar/BRL", "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CNY",
@@ -759,14 +801,31 @@ with tab1:
         cor_var = "#22c55e" if var_d > 0 else "#ef4444" if var_d < 0 else "#94a3b8"
         seta    = "▲" if var_d > 0 else "▼" if var_d < 0 else "—"
         vol_fmt = f"{vol_d:,.0f}".replace(",",".") if vol_d else "—"
+
+        # Bloco de variações por período
+        def bloco_var(label, v):
+            if v is None:
+                return f'<div class="var-per"><div class="var-per-lbl">{label}</div><div class="var-per-val" style="color:#475569">—</div></div>'
+            cor = "#22c55e" if v > 0 else "#ef4444" if v < 0 else "#94a3b8"
+            s = "▲" if v > 0 else "▼" if v < 0 else "—"
+            return f'<div class="var-per"><div class="var-per-lbl">{label}</div><div class="var-per-val" style="color:{cor}">{s} {abs(v):.2f}%</div></div>'
+
+        vars_html = (
+            bloco_var("Dia",    dados_d.get("var_dia")) +
+            bloco_var("Semana", dados_d.get("var_semana")) +
+            bloco_var("Mês",    dados_d.get("var_mes")) +
+            bloco_var("Ano",    dados_d.get("var_ano"))
+        )
+
         st.markdown(f"""
         <div style="background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:1rem 1.3rem;margin-bottom:1rem">
-          <div style="display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;margin-bottom:.8rem">
+          <div style="display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;margin-bottom:.9rem">
             <div style="font-size:1.6rem;font-weight:700;color:#f1f5f9;font-family:'JetBrains Mono',monospace">{fmt_preco(preco_d)}</div>
             <div style="font-size:.95rem;font-weight:700;color:{cor_var}">{seta} {abs(var_d):.2f}%</div>
             <div style="font-size:.78rem;color:#475569;margin-left:auto">{ativo_detalhe}</div>
           </div>
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem">
+          <div class="var-per-row">{vars_html}</div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem;margin-top:.7rem">
             <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.5rem .7rem">
               <div style="font-size:.6rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.15rem">Abertura</div>
               <div style="font-size:.85rem;font-weight:600;color:#f1f5f9;font-family:'JetBrains Mono',monospace">{fmt_preco(open_d) if open_d else '—'}</div>
@@ -784,6 +843,7 @@ with tab1:
               <div style="font-size:.85rem;font-weight:600;color:#f1f5f9;font-family:'JetBrains Mono',monospace">{vol_fmt}</div>
             </div>
           </div>
+          {'<div style="font-size:.66rem;color:#475569;margin-top:.6rem">≈ valor de referência (WINFUT ~ IBOV à vista · WDOFUT ~ Dólar×1000)</div>' if dados_d.get("aprox") else ''}
         </div>
         """, unsafe_allow_html=True)
     else:
