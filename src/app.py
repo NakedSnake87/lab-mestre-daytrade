@@ -144,6 +144,7 @@ def _fetch_forex():
 
 def _fetch_cripto():
     hdrs = {"User-Agent": "Mozilla/5.0"}
+    res = {}
     try:
         ids = ",".join(CRIPTO_IDS.values())
         r = requests.get(
@@ -151,17 +152,37 @@ def _fetch_cripto():
             timeout=4, headers=hdrs)
         if r.status_code == 200:
             data = r.json()
-            res  = {}
             for nome, cid in CRIPTO_IDS.items():
                 if cid in data:
                     res[nome] = {
                         "preco": data[cid].get("usd",0),
                         "var":   round(data[cid].get("usd_24h_change",0),2),
+                        "var_dia": round(data[cid].get("usd_24h_change",0),2),
                     }
-            return res
     except:
         pass
-    return {}
+
+    # Histórico 1 ano para variações de período (só BTC e ETH p/ não estourar rate-limit)
+    for nome in ("Bitcoin", "Ethereum"):
+        if nome not in res:
+            continue
+        try:
+            cid = CRIPTO_IDS[nome]
+            rh = requests.get(
+                f"https://api.coingecko.com/api/v3/coins/{cid}/market_chart?vs_currency=usd&days=365&interval=daily",
+                timeout=6, headers=hdrs)
+            if rh.status_code == 200:
+                precos = [p[1] for p in rh.json().get("prices", [])]
+                if precos:
+                    vp = _variacoes_periodo(precos)
+                    for k in ("var_semana","var_mes","var_ano","max_semana","min_semana",
+                              "max_mes","min_mes","max_ano","min_ano"):
+                        if vp.get(k) is not None:
+                            res[nome][k] = vp[k]
+        except:
+            pass
+
+    return res
 
 # ── yfinance — fonte robusta com variações por período ────────────────────────
 YF_MAP = {
@@ -176,29 +197,45 @@ YF_MAP = {
     "Ouro":          "GC=F",
 }
 
-def _variacoes_periodo(serie_close):
-    """Calcula variação %: dia, semana, mês, ano a partir de uma série de fechamentos."""
+def _variacoes_periodo(serie_close, serie_high=None, serie_low=None):
+    """Calcula variação %, máxima e mínima por período (dia/semana/mês/ano)."""
     import math
     if serie_close is None or len(serie_close) < 1:
         return {}
-    closes = [float(c) for c in serie_close if c and not math.isnan(c)]
+    closes = [float(c) for c in serie_close if c is not None and not math.isnan(c)]
     if len(closes) < 1:
         return {}
+    highs = [float(h) for h in (serie_high or serie_close) if h is not None and not math.isnan(h)]
+    lows  = [float(l) for l in (serie_low  or serie_close) if l is not None and not math.isnan(l)]
     atual = closes[-1]
+
     def var_n(n):
         if len(closes) > n:
             ref = closes[-(n+1)]
-            return round((atual - ref) / ref * 100, 2) if ref else None
         elif len(closes) >= 2:
             ref = closes[0]
-            return round((atual - ref) / ref * 100, 2) if ref else None
-        return None
-    return {
-        "var_dia":    var_n(1),    # vs ontem
-        "var_semana": var_n(5),    # ~5 pregões
-        "var_mes":    var_n(22),   # ~22 pregões
-        "var_ano":    var_n(252),  # ~252 pregões
+        else:
+            return None
+        return round((atual - ref) / ref * 100, 2) if ref else None
+
+    def maxmin_n(n):
+        jan_h = highs[-(n+1):] if len(highs) > n else highs
+        jan_l = lows[-(n+1):]  if len(lows)  > n else lows
+        mx = max(jan_h) if jan_h else None
+        mn = min(jan_l) if jan_l else None
+        return mx, mn
+
+    out = {
+        "var_dia":    var_n(1),
+        "var_semana": var_n(5),
+        "var_mes":    var_n(22),
+        "var_ano":    var_n(252),
     }
+    for nome, n in [("semana",5), ("mes",22), ("ano",252)]:
+        mx, mn = maxmin_n(n)
+        out[f"max_{nome}"] = mx
+        out[f"min_{nome}"] = mn
+    return out
 
 def _fetch_yfinance():
     """Busca índices via yfinance com histórico de 1 ano (p/ variações de período)."""
@@ -219,7 +256,9 @@ def _fetch_yfinance():
                     high  = float(df["High"].iloc[-1])
                     low   = float(df["Low"].iloc[-1])
                     vol   = float(df["Volume"].iloc[-1]) if "Volume" in df else 0
-                    vars_ = _variacoes_periodo(df["Close"].tolist())
+                    vars_ = _variacoes_periodo(df["Close"].tolist(),
+                                               df["High"].tolist(),
+                                               df["Low"].tolist())
                     var = vars_.get("var_dia") or 0
                     if close:
                         d = {"preco": close, "var": var, "open": open_,
@@ -277,10 +316,14 @@ def buscar_cotacoes():
             "low":  round(dol.get("low",0)*1000,1) if dol.get("low") else 0,
             "volume": 0, "aprox": True,
         }
-        # herda variações de período do dólar
+        # herda variações % (mesmas do dólar)
         for k in ("var_dia","var_semana","var_mes","var_ano"):
             if k in dol:
                 wdo[k] = dol[k]
+        # herda max/min de período com escala ×1000
+        for k in ("max_semana","min_semana","max_mes","min_mes","max_ano","min_ano"):
+            if dol.get(k):
+                wdo[k] = round(dol[k]*1000, 1)
         resultado["WDOFUT"] = wdo
 
     return resultado
@@ -598,11 +641,14 @@ html,body,[data-testid="stAppViewContainer"]{background:#0a0e1a!important;color:
 .grade-dn .grade-var{font-size:.72rem;font-weight:700;color:#ef4444;font-family:'JetBrains Mono',monospace}
 .grade-nt .grade-var{font-size:.72rem;font-weight:600;color:#64748b}
 
-/* ── VARIAÇÕES POR PERÍODO ── */
-.var-per-row{display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem}
-.var-per{background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.5rem .7rem;text-align:center}
-.var-per-lbl{font-size:.6rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem}
-.var-per-val{font-size:.92rem;font-weight:700;font-family:'JetBrains Mono',monospace}
+/* ── TABELA DE PERÍODO ── */
+.tab-periodo{width:100%;border-collapse:collapse;font-family:'JetBrains Mono',monospace}
+.tab-periodo th{font-size:.62rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;
+    font-weight:600;padding:.35rem .5rem;text-align:center;border-bottom:1px solid #1e293b}
+.tab-periodo th:first-child{text-align:left}
+.tab-periodo td{font-size:.82rem;font-weight:700;padding:.4rem .5rem;text-align:center;border-bottom:1px solid rgba(255,255,255,.04)}
+.tab-periodo .tp-lbl{font-size:.66rem;color:#94a3b8;font-weight:600;text-transform:uppercase;letter-spacing:.04em;text-align:left;font-family:'Space Grotesk',sans-serif}
+.tab-periodo tr:last-child td{border-bottom:none}
 
 /* ── UTILITÁRIOS ── */
 .sec-title{font-size:1.05rem;font-weight:700;color:#f1f5f9;margin:1.2rem 0 .7rem;display:flex;align-items:center;gap:.5rem}
@@ -802,20 +848,45 @@ with tab1:
         seta    = "▲" if var_d > 0 else "▼" if var_d < 0 else "—"
         vol_fmt = f"{vol_d:,.0f}".replace(",",".") if vol_d else "—"
 
-        # Bloco de variações por período
-        def bloco_var(label, v):
+        def cel_var(v):
             if v is None:
-                return f'<div class="var-per"><div class="var-per-lbl">{label}</div><div class="var-per-val" style="color:#475569">—</div></div>'
+                return '<span style="color:#475569">—</span>'
             cor = "#22c55e" if v > 0 else "#ef4444" if v < 0 else "#94a3b8"
             s = "▲" if v > 0 else "▼" if v < 0 else "—"
-            return f'<div class="var-per"><div class="var-per-lbl">{label}</div><div class="var-per-val" style="color:{cor}">{s} {abs(v):.2f}%</div></div>'
+            return f'<span style="color:{cor}">{s} {abs(v):.2f}%</span>'
 
-        vars_html = (
-            bloco_var("Dia",    dados_d.get("var_dia")) +
-            bloco_var("Semana", dados_d.get("var_semana")) +
-            bloco_var("Mês",    dados_d.get("var_mes")) +
-            bloco_var("Ano",    dados_d.get("var_ano"))
-        )
+        def cel_val(v, cor="#f1f5f9"):
+            return f'<span style="color:{cor}">{fmt_preco(v)}</span>' if v else '<span style="color:#475569">—</span>'
+
+        # Tabela: linhas = Variação / Máxima / Mínima | colunas = Dia/Semana/Mês/Ano
+        tabela = f"""
+        <table class="tab-periodo">
+          <thead><tr><th></th><th>Dia</th><th>Semana</th><th>Mês</th><th>Ano</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="tp-lbl">Variação</td>
+              <td>{cel_var(dados_d.get("var_dia"))}</td>
+              <td>{cel_var(dados_d.get("var_semana"))}</td>
+              <td>{cel_var(dados_d.get("var_mes"))}</td>
+              <td>{cel_var(dados_d.get("var_ano"))}</td>
+            </tr>
+            <tr>
+              <td class="tp-lbl">Máxima</td>
+              <td>{cel_val(high_d, "#22c55e")}</td>
+              <td>{cel_val(dados_d.get("max_semana"), "#22c55e")}</td>
+              <td>{cel_val(dados_d.get("max_mes"), "#22c55e")}</td>
+              <td>{cel_val(dados_d.get("max_ano"), "#22c55e")}</td>
+            </tr>
+            <tr>
+              <td class="tp-lbl">Mínima</td>
+              <td>{cel_val(low_d, "#ef4444")}</td>
+              <td>{cel_val(dados_d.get("min_semana"), "#ef4444")}</td>
+              <td>{cel_val(dados_d.get("min_mes"), "#ef4444")}</td>
+              <td>{cel_val(dados_d.get("min_ano"), "#ef4444")}</td>
+            </tr>
+          </tbody>
+        </table>
+        """
 
         st.markdown(f"""
         <div style="background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:1rem 1.3rem;margin-bottom:1rem">
@@ -824,26 +895,12 @@ with tab1:
             <div style="font-size:.95rem;font-weight:700;color:{cor_var}">{seta} {abs(var_d):.2f}%</div>
             <div style="font-size:.78rem;color:#475569;margin-left:auto">{ativo_detalhe}</div>
           </div>
-          <div class="var-per-row">{vars_html}</div>
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.5rem;margin-top:.7rem">
-            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.5rem .7rem">
-              <div style="font-size:.6rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.15rem">Abertura</div>
-              <div style="font-size:.85rem;font-weight:600;color:#f1f5f9;font-family:'JetBrains Mono',monospace">{fmt_preco(open_d) if open_d else '—'}</div>
-            </div>
-            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.5rem .7rem">
-              <div style="font-size:.6rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.15rem">Máxima</div>
-              <div style="font-size:.85rem;font-weight:600;color:#22c55e;font-family:'JetBrains Mono',monospace">{fmt_preco(high_d) if high_d else '—'}</div>
-            </div>
-            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.5rem .7rem">
-              <div style="font-size:.6rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.15rem">Mínima</div>
-              <div style="font-size:.85rem;font-weight:600;color:#ef4444;font-family:'JetBrains Mono',monospace">{fmt_preco(low_d) if low_d else '—'}</div>
-            </div>
-            <div style="background:#0a0e1a;border:1px solid #1e293b;border-radius:8px;padding:.5rem .7rem">
-              <div style="font-size:.6rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.15rem">Volume</div>
-              <div style="font-size:.85rem;font-weight:600;color:#f1f5f9;font-family:'JetBrains Mono',monospace">{vol_fmt}</div>
-            </div>
+          {tabela}
+          <div style="display:flex;gap:1.5rem;margin-top:.8rem;font-size:.78rem;color:#94a3b8">
+            <div>Abertura: <b style="color:#f1f5f9;font-family:'JetBrains Mono',monospace">{fmt_preco(open_d) if open_d else '—'}</b></div>
+            <div>Volume: <b style="color:#f1f5f9;font-family:'JetBrains Mono',monospace">{vol_fmt}</b></div>
           </div>
-          {'<div style="font-size:.66rem;color:#475569;margin-top:.6rem">≈ valor de referência (WINFUT ~ IBOV à vista · WDOFUT ~ Dólar×1000)</div>' if dados_d.get("aprox") else ''}
+          {'<div style="font-size:.66rem;color:#475569;margin-top:.6rem">≈ valor de referência (WINFUT ~ IBOV à vista · WDOFUT ~ Dólar×1000). Máx/Mín do dia atualizam no pregão.</div>' if dados_d.get("aprox") else ''}
         </div>
         """, unsafe_allow_html=True)
     else:
