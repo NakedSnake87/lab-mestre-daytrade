@@ -726,13 +726,18 @@ html,body,[data-testid="stAppViewContainer"]{background:#0a0e1a!important;color:
 }
 .ticker-label{
     flex-shrink:0;background:#0066ff;color:#fff;font-size:.7rem;font-weight:700;
-    padding:0 .8rem;height:100%;display:flex;align-items:center;letter-spacing:.05em;
+    padding:0 .9rem;height:100%;display:flex;align-items:center;gap:.3rem;letter-spacing:.05em;
     white-space:nowrap;font-family:'JetBrains Mono',monospace;
+    position:relative;z-index:2;
+    box-shadow:6px 0 12px rgba(11,17,32,.95);
 }
+.ticker-live-dot{width:7px;height:7px;border-radius:50%;background:#fff;
+    animation:live-pulse 1.4s ease-in-out infinite}
+@keyframes live-pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.ticker-viewport{flex:1;overflow:hidden;position:relative;z-index:1}
 .ticker-track{
     display:flex;gap:0;white-space:nowrap;
     animation:ticker-scroll 60s linear infinite;
-    padding-left:2rem;
 }
 .ticker-wrap:hover .ticker-track{animation-play-state:paused}
 @keyframes ticker-scroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
@@ -911,8 +916,8 @@ items_html = "".join(ticker_item(n, cotacoes.get(n)) for n in TICKER_ATIVOS)
 # Duplica para loop contínuo
 tape_html = f"""
 <div class="ticker-wrap">
-  <div class="ticker-label">📈 LIVE</div>
-  <div class="ticker-track">{items_html}{items_html}</div>
+  <div class="ticker-label"><span class="ticker-live-dot"></span>LIVE</div>
+  <div class="ticker-viewport"><div class="ticker-track">{items_html}{items_html}</div></div>
 </div>
 """
 st.markdown(tape_html, unsafe_allow_html=True)
@@ -1088,6 +1093,25 @@ with tab1:
     if not noticias:
         st.markdown('<div style="color:#475569;font-size:.83rem;padding:.8rem 0">Nenhuma notícia encontrada. Tente outro termo.</div>', unsafe_allow_html=True)
     else:
+        # ── DESTAQUES DO DIA (manchetes quentes) ──────────────────────────────
+        if not query_n:
+            destaques = [n for n in noticias if n.get("quente")][:3]
+            if destaques:
+                cards_dest = ""
+                for n in destaques:
+                    t = html_mod.escape(n.get("title",""))
+                    u = n.get("url","#")
+                    f = n.get("fonte","")
+                    cat = n.get("cat","📰")
+                    cards_dest += f"""<a href="{u}" target="_blank" style="text-decoration:none;flex:1;min-width:220px">
+                        <div style="background:linear-gradient(135deg,#1a1408,#0f0c04);border:1px solid rgba(245,158,11,.35);border-left:3px solid #f59e0b;border-radius:10px;padding:.7rem .9rem;height:100%;transition:all .2s">
+                          <div style="font-size:.6rem;color:#fbbf24;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.35rem">🔥 {f} · {cat}</div>
+                          <div style="font-size:.82rem;font-weight:600;color:#f1f5f9;line-height:1.35">{t}</div>
+                        </div></a>"""
+                st.markdown('<div class="sec-title" style="font-size:.95rem;margin-top:.3rem">🔥 Destaques do Dia</div>', unsafe_allow_html=True)
+                st.markdown(f'<div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-bottom:1rem">{cards_dest}</div>', unsafe_allow_html=True)
+                st.markdown('<div class="sec-title" style="font-size:.95rem">📰 Todas as Notícias</div>', unsafe_allow_html=True)
+
         st.markdown(f'<div style="font-size:.72rem;color:#475569;margin-bottom:.6rem">🔴 {len(noticias)} notícias · atualiza a cada 2 min</div>', unsafe_allow_html=True)
         for n in noticias:
             t = html_mod.escape(n.get("title",""))
