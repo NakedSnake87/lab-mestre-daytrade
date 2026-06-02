@@ -4,16 +4,168 @@ import base64
 import xml.etree.ElementTree as ET
 import re
 import html as html_mod
-from datetime import datetime
+import sqlite3
+import os
+from datetime import datetime, timedelta, date
 import pytz
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 GROQ_KEY = st.secrets["GROQ_KEY"]
 NEWS_KEY  = st.secrets["NEWS_KEY"]
 BR_TZ     = pytz.timezone("America/Sao_Paulo")
+DB_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "diario_trades.db")
 
 def agora_br():
     return datetime.now(BR_TZ).strftime("%d/%m/%Y %H:%M")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CAMADA DE DADOS — Diário de Operações (SQLite)
+# ══════════════════════════════════════════════════════════════════════════════
+def db_conn():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def db_init():
+    conn = db_conn()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS trades (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            data        TEXT NOT NULL,
+            ativo       TEXT NOT NULL,
+            direcao     TEXT NOT NULL,
+            contratos   INTEGER DEFAULT 1,
+            pontos      REAL DEFAULT 0,
+            resultado   REAL DEFAULT 0,
+            seguiu_setup INTEGER DEFAULT 1,
+            esticou_stop INTEGER DEFAULT 0,
+            hora        TEXT DEFAULT '',
+            obs         TEXT DEFAULT '',
+            criado_em   TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def db_add_trade(d):
+    conn = db_conn()
+    conn.execute("""
+        INSERT INTO trades (data, ativo, direcao, contratos, pontos, resultado,
+                            seguiu_setup, esticou_stop, hora, obs, criado_em)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    """, (d["data"], d["ativo"], d["direcao"], d["contratos"], d["pontos"],
+          d["resultado"], d["seguiu_setup"], d["esticou_stop"], d["hora"],
+          d["obs"], datetime.now(BR_TZ).isoformat()))
+    conn.commit()
+    conn.close()
+
+def db_listar_trades(limite=500):
+    conn = db_conn()
+    rows = conn.execute("SELECT * FROM trades ORDER BY data DESC, id DESC LIMIT ?", (limite,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def db_deletar_trade(trade_id):
+    conn = db_conn()
+    conn.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+    conn.commit()
+    conn.close()
+
+def db_trades_periodo(dias=30):
+    conn = db_conn()
+    limite = (datetime.now(BR_TZ) - timedelta(days=dias)).strftime("%Y-%m-%d")
+    rows = conn.execute("SELECT * FROM trades WHERE data >= ? ORDER BY data", (limite,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+# ── ESTATÍSTICAS ──────────────────────────────────────────────────────────────
+def calcular_estatisticas(trades):
+    if not trades:
+        return None
+    n = len(trades)
+    resultados = [t["resultado"] for t in trades]
+    lucro_total = sum(resultados)
+    ganhos  = [r for r in resultados if r > 0]
+    perdas  = [r for r in resultados if r < 0]
+    n_ganhos = len(ganhos)
+    n_perdas = len(perdas)
+    assertividade = (n_ganhos / n * 100) if n else 0
+    soma_ganhos = sum(ganhos)
+    soma_perdas = abs(sum(perdas))
+    profit_factor = (soma_ganhos / soma_perdas) if soma_perdas else (soma_ganhos if soma_ganhos else 0)
+    media_ganho = (soma_ganhos / n_ganhos) if n_ganhos else 0
+    media_perda = (soma_perdas / n_perdas) if n_perdas else 0
+    rr_medio = (media_ganho / media_perda) if media_perda else (media_ganho if media_ganho else 0)
+
+    # Por dia
+    por_dia = {}
+    for t in trades:
+        por_dia.setdefault(t["data"], 0)
+        por_dia[t["data"]] += t["resultado"]
+    melhor_dia = max(por_dia.values()) if por_dia else 0
+    pior_dia   = min(por_dia.values()) if por_dia else 0
+
+    # Erros comportamentais
+    esticou_stop = sum(1 for t in trades if t.get("esticou_stop"))
+    fora_setup   = sum(1 for t in trades if not t.get("seguiu_setup"))
+    perda_por_esticar = abs(sum(t["resultado"] for t in trades if t.get("esticou_stop") and t["resultado"] < 0))
+
+    # Overtrade: dias com mais de 4 trades
+    trades_por_dia = {}
+    for t in trades:
+        trades_por_dia.setdefault(t["data"], 0)
+        trades_por_dia[t["data"]] += 1
+    dias_overtrade = sum(1 for c in trades_por_dia.values() if c > 4)
+
+    return {
+        "n": n, "lucro_total": lucro_total, "assertividade": assertividade,
+        "profit_factor": profit_factor, "rr_medio": rr_medio,
+        "melhor_dia": melhor_dia, "pior_dia": pior_dia,
+        "n_ganhos": n_ganhos, "n_perdas": n_perdas,
+        "media_ganho": media_ganho, "media_perda": media_perda,
+        "esticou_stop": esticou_stop, "fora_setup": fora_setup,
+        "perda_por_esticar": perda_por_esticar, "dias_overtrade": dias_overtrade,
+        "por_dia": por_dia,
+    }
+
+# ── SCORE DE TRADER ───────────────────────────────────────────────────────────
+def calcular_score(stats):
+    if not stats or stats["n"] < 3:
+        return None
+    n = stats["n"]
+
+    # Gestão de risco (0-100): penaliza esticar stop e profit factor baixo
+    pct_esticou = stats["esticou_stop"] / n
+    pf = stats["profit_factor"]
+    gestao = 100
+    gestao -= pct_esticou * 60          # esticar stop pesa muito
+    gestao += min((pf - 1) * 20, 20) if pf > 1 else max((pf - 1) * 30, -40)
+    gestao = max(0, min(100, gestao))
+
+    # Disciplina (0-100): seguir setup + não fazer overtrade
+    pct_setup = (n - stats["fora_setup"]) / n
+    n_dias = len(stats["por_dia"]) or 1
+    pct_overtrade = stats["dias_overtrade"] / n_dias
+    disciplina = pct_setup * 100 - pct_overtrade * 40
+    disciplina = max(0, min(100, disciplina))
+
+    # Assertividade (0-100): direto, com teto realista
+    assert_score = min(stats["assertividade"] * 1.25, 100)
+
+    # Risco/retorno (0-100)
+    rr = stats["rr_medio"]
+    rr_score = min(rr / 2 * 100, 100) if rr > 0 else 0
+
+    geral = round(gestao * 0.30 + disciplina * 0.30 + assert_score * 0.20 + rr_score * 0.20)
+    return {
+        "geral": geral,
+        "gestao": round(gestao),
+        "disciplina": round(disciplina),
+        "assertividade": round(assert_score),
+        "risco_retorno": round(rr_score),
+    }
+
+
 
 # ── IA ────────────────────────────────────────────────────────────────────────
 def ia(prompt, system="", historico=None, imagem_b64=None):
@@ -785,7 +937,13 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-tab1, tab2, tab3 = st.tabs(["🌍  Mercados & Notícias", "🛡️  Gerenciamento de Risco", "🤖  Chat com o Mestre"])
+db_init()
+tab1, tab2, tab3, tab4 = st.tabs([
+    "🌍  Mercados & Notícias",
+    "🛡️  Gerenciamento de Risco",
+    "🤖  Chat com o Mestre",
+    "📒  Diário & Score",
+])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — MERCADOS
@@ -1100,5 +1258,162 @@ with tab3:
             if st.session_state.historico:
                 qtd = len(st.session_state.historico)//2
                 st.markdown(f'<div style="font-size:.7rem;color:#475569;padding-top:.55rem;text-align:right">{qtd} mensagem(s)</div>', unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — DIÁRIO & SCORE
+# ══════════════════════════════════════════════════════════════════════════════
+with tab4:
+    sub_reg, sub_stats = st.columns([1, 1])
+
+    # ── REGISTRAR OPERAÇÃO ────────────────────────────────────────────────────
+    with sub_reg:
+        st.markdown('<div class="sec-title" style="margin-top:.3rem">✍️ Registrar Operação</div>', unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            r_data    = st.date_input("Data", value=datetime.now(BR_TZ).date(), format="DD/MM/YYYY")
+            r_ativo   = st.selectbox("Ativo", ["WIN", "WDO"])
+            r_direcao = st.selectbox("Direção", ["Compra", "Venda"])
+            r_hora    = st.selectbox("Horário", ["9h-10h","10h-11h","11h-12h","12h-14h","14h-16h","16h-18h"])
+        with c2:
+            r_contratos = st.number_input("Contratos", min_value=1, max_value=50, value=1, step=1)
+            r_pontos    = st.number_input("Pontos (+ ganho / − perda)", value=0.0, step=5.0, format="%.1f")
+            r_seguiu    = st.checkbox("Segui meu setup", value=True)
+            r_esticou   = st.checkbox("Estiquei o stop", value=False)
+
+        r_obs = st.text_input("Observação (opcional)", placeholder="Ex: entrei no rompimento da máxima…")
+
+        # Calcula resultado em R$ pelo multiplicador B3
+        val_pt = MULT["WDO" if r_ativo == "WDO" else "WIN"]
+        r_resultado = r_pontos * r_contratos * val_pt
+        cor_prev = "#22c55e" if r_resultado > 0 else "#ef4444" if r_resultado < 0 else "#94a3b8"
+        st.markdown(f'<div style="font-size:.85rem;color:#94a3b8;margin:.3rem 0">Resultado calculado: <b style="color:{cor_prev};font-family:\'JetBrains Mono\',monospace">R$ {r_resultado:,.2f}</b></div>', unsafe_allow_html=True)
+
+        if st.button("💾  Salvar Operação"):
+            db_add_trade({
+                "data": r_data.strftime("%Y-%m-%d"),
+                "ativo": r_ativo, "direcao": r_direcao,
+                "contratos": int(r_contratos), "pontos": float(r_pontos),
+                "resultado": float(r_resultado),
+                "seguiu_setup": 1 if r_seguiu else 0,
+                "esticou_stop": 1 if r_esticou else 0,
+                "hora": r_hora, "obs": r_obs,
+            })
+            st.success("Operação registrada!")
+            st.rerun()
+
+    # ── SCORE ─────────────────────────────────────────────────────────────────
+    with sub_stats:
+        periodo = st.selectbox("Período de análise", ["Últimos 30 dias","Últimos 7 dias","Últimos 90 dias","Tudo"], key="periodo_stats")
+        dias_map = {"Últimos 7 dias":7,"Últimos 30 dias":30,"Últimos 90 dias":90,"Tudo":3650}
+        trades = db_trades_periodo(dias_map[periodo])
+        stats  = calcular_estatisticas(trades)
+        score  = calcular_score(stats) if stats else None
+
+        st.markdown('<div class="sec-title" style="margin-top:.3rem">🏆 Score de Trader</div>', unsafe_allow_html=True)
+        if score:
+            cor_geral = "#22c55e" if score["geral"] >= 75 else "#f59e0b" if score["geral"] >= 50 else "#ef4444"
+            def barra(lbl, val):
+                cor = "#22c55e" if val >= 75 else "#f59e0b" if val >= 50 else "#ef4444"
+                return f'''<div style="margin-bottom:.5rem">
+                    <div style="display:flex;justify-content:space-between;font-size:.78rem;margin-bottom:.2rem">
+                        <span style="color:#94a3b8">{lbl}</span><span style="color:{cor};font-weight:700;font-family:'JetBrains Mono',monospace">{val}</span>
+                    </div>
+                    <div style="background:#0a0e1a;border-radius:6px;height:7px;overflow:hidden">
+                        <div style="width:{val}%;height:100%;background:{cor};border-radius:6px"></div>
+                    </div></div>'''
+            st.markdown(f"""
+            <div style="background:#0f172a;border:1px solid #1e293b;border-radius:14px;padding:1.2rem 1.4rem">
+              <div style="text-align:center;margin-bottom:1rem">
+                <div style="font-size:2.6rem;font-weight:700;color:{cor_geral};font-family:'JetBrains Mono',monospace;line-height:1">{score['geral']}<span style="font-size:1rem;color:#475569">/100</span></div>
+                <div style="font-size:.7rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em;margin-top:.3rem">Score Geral</div>
+              </div>
+              {barra("Gestão de risco", score["gestao"])}
+              {barra("Disciplina", score["disciplina"])}
+              {barra("Assertividade", score["assertividade"])}
+              {barra("Risco/Retorno", score["risco_retorno"])}
+            </div>""", unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="background:#0f172a;border:1px solid #1e293b;border-radius:14px;padding:1.2rem;color:#475569;font-size:.85rem">Registre pelo menos 3 operações para gerar seu Score.</div>', unsafe_allow_html=True)
+
+    # ── PAINEL DE ESTATÍSTICAS ────────────────────────────────────────────────
+    if stats:
+        st.markdown('<div class="sec-divider"></div><div class="sec-title">📊 Estatísticas — ' + periodo + '</div>', unsafe_allow_html=True)
+        cor_lucro = "#22c55e" if stats["lucro_total"] >= 0 else "#ef4444"
+        cols = st.columns(4)
+        metricas = [
+            ("Resultado", f"R$ {stats['lucro_total']:,.2f}", cor_lucro),
+            ("Assertividade", f"{stats['assertividade']:.1f}%", "#f1f5f9"),
+            ("Profit Factor", f"{stats['profit_factor']:.2f}", "#22c55e" if stats['profit_factor']>=1.5 else "#f59e0b"),
+            ("Operações", f"{stats['n']}", "#f1f5f9"),
+        ]
+        for col, (lbl, val, cor) in zip(cols, metricas):
+            col.markdown(f'<div style="background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:.8rem 1rem"><div style="font-size:.62rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.25rem">{lbl}</div><div style="font-size:1.15rem;font-weight:700;color:{cor};font-family:\'JetBrains Mono\',monospace">{val}</div></div>', unsafe_allow_html=True)
+
+        cols2 = st.columns(4)
+        metricas2 = [
+            ("Melhor dia", f"R$ {stats['melhor_dia']:,.2f}", "#22c55e"),
+            ("Pior dia", f"R$ {stats['pior_dia']:,.2f}", "#ef4444"),
+            ("Ganhos / Perdas", f"{stats['n_ganhos']} / {stats['n_perdas']}", "#f1f5f9"),
+            ("R/R médio", f"1:{stats['rr_medio']:.1f}", "#f1f5f9"),
+        ]
+        for col, (lbl, val, cor) in zip(cols2, metricas2):
+            col.markdown(f'<div style="background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:.8rem 1rem;margin-top:.5rem"><div style="font-size:.62rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.25rem">{lbl}</div><div style="font-size:1.15rem;font-weight:700;color:{cor};font-family:\'JetBrains Mono\',monospace">{val}</div></div>', unsafe_allow_html=True)
+
+        # ── ERROS COMPORTAMENTAIS DETECTADOS ──────────────────────────────────
+        st.markdown('<div class="sec-title" style="font-size:.95rem;margin-top:1rem">⚠️ Erros Detectados</div>', unsafe_allow_html=True)
+        erros = []
+        if stats["esticou_stop"] > 0:
+            erros.append(f"🔴 Stop esticado <b>{stats['esticou_stop']}x</b> — perda de R$ {stats['perda_por_esticar']:,.2f} por esticar stop")
+        if stats["dias_overtrade"] > 0:
+            erros.append(f"🟠 Overtrade em <b>{stats['dias_overtrade']} dia(s)</b> — mais de 4 operações no mesmo dia")
+        if stats["fora_setup"] > 0:
+            erros.append(f"🟡 <b>{stats['fora_setup']}</b> operação(ões) fora do setup planejado")
+        if not erros:
+            erros.append("🟢 Nenhum erro comportamental grave detectado. Continue assim!")
+        for e in erros:
+            st.markdown(f'<div style="background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:.6rem .9rem;margin-bottom:.4rem;font-size:.83rem;color:#cbd5e1">{e}</div>', unsafe_allow_html=True)
+
+        # ── ANÁLISE COMPORTAMENTAL VIA IA ─────────────────────────────────────
+        if st.button("🧠  Analisar meu comportamento com a IA"):
+            resumo = (f"Trader com {stats['n']} operações no período. "
+                      f"Resultado: R${stats['lucro_total']:.2f}. Assertividade: {stats['assertividade']:.1f}%. "
+                      f"Profit factor: {stats['profit_factor']:.2f}. RR médio: 1:{stats['rr_medio']:.1f}. "
+                      f"Esticou stop {stats['esticou_stop']}x (perda R${stats['perda_por_esticar']:.2f}). "
+                      f"Overtrade em {stats['dias_overtrade']} dias. Fora do setup {stats['fora_setup']}x. "
+                      f"Melhor dia R${stats['melhor_dia']:.2f}, pior dia R${stats['pior_dia']:.2f}.")
+            with st.spinner("IA analisando seu comportamento…"):
+                analise = ia(
+                    f"Analise o comportamento deste trader e dê 3-4 insights diretos e práticos para ele melhorar. Seja específico com os números. Dados: {resumo}",
+                    system=SYSTEM_PROMPT)
+            st.markdown(f'<div class="chat-msg-bot" style="max-width:100%">🧠 {html_mod.escape(analise)}</div>', unsafe_allow_html=True)
+
+    # ── HISTÓRICO DE OPERAÇÕES ────────────────────────────────────────────────
+    st.markdown('<div class="sec-divider"></div><div class="sec-title">📋 Histórico de Operações</div>', unsafe_allow_html=True)
+    todos = db_listar_trades(100)
+    if not todos:
+        st.markdown('<div style="color:#475569;font-size:.85rem;padding:.5rem 0">Nenhuma operação registrada ainda. Comece pelo formulário acima.</div>', unsafe_allow_html=True)
+    else:
+        for t in todos[:30]:
+            cor = "#22c55e" if t["resultado"] > 0 else "#ef4444" if t["resultado"] < 0 else "#94a3b8"
+            dir_emoji = "🟢" if t["direcao"] == "Compra" else "🔴"
+            data_fmt = datetime.strptime(t["data"], "%Y-%m-%d").strftime("%d/%m")
+            flags = []
+            if t.get("esticou_stop"): flags.append("⚠️ stop esticado")
+            if not t.get("seguiu_setup"): flags.append("fora do setup")
+            flags_txt = " · ".join(flags)
+            cc1, cc2 = st.columns([6,1])
+            with cc1:
+                st.markdown(f"""<div style="background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:.5rem .8rem;margin-bottom:.35rem">
+                    <div style="display:flex;justify-content:space-between;align-items:center">
+                      <div style="font-size:.82rem;color:#e2e8f0">{dir_emoji} <b>{t['ativo']}</b> · {data_fmt} · {t['hora']} · {t['contratos']}c · {t['pontos']:+.0f}pts</div>
+                      <div style="font-size:.9rem;font-weight:700;color:{cor};font-family:'JetBrains Mono',monospace">R$ {t['resultado']:,.2f}</div>
+                    </div>
+                    {f'<div style="font-size:.68rem;color:#f59e0b;margin-top:.2rem">{flags_txt}</div>' if flags_txt else ''}
+                    {f'<div style="font-size:.7rem;color:#64748b;margin-top:.2rem">{html_mod.escape(t["obs"])}</div>' if t.get("obs") else ''}
+                </div>""", unsafe_allow_html=True)
+            with cc2:
+                if st.button("🗑️", key=f"del_{t['id']}"):
+                    db_deletar_trade(t["id"])
+                    st.rerun()
 
 st.markdown('</div>', unsafe_allow_html=True)
