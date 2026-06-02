@@ -1300,11 +1300,15 @@ with tab4:
             r_hora    = st.selectbox("Horário", ["9h-10h","10h-11h","11h-12h","12h-14h","14h-16h","16h-18h"])
         with c2:
             r_contratos = st.number_input("Contratos", min_value=1, max_value=50, value=1, step=1)
-            r_pontos    = st.number_input("Pontos (+ ganho / − perda)", value=0.0, step=5.0, format="%.1f")
+            r_tipo      = st.radio("Resultado", ["🟢 Gain", "🔴 Loss"], horizontal=True)
+            r_pontos_abs = st.number_input("Pontos", min_value=0.0, value=0.0, step=5.0, format="%.1f")
             r_seguiu    = st.checkbox("Segui meu setup", value=True)
             r_esticou   = st.checkbox("Estiquei o stop", value=False)
 
         r_obs = st.text_input("Observação (opcional)", placeholder="Ex: entrei no rompimento da máxima…")
+
+        # Aplica sinal conforme Gain/Loss
+        r_pontos = r_pontos_abs if r_tipo == "🟢 Gain" else -r_pontos_abs
 
         # Calcula resultado em R$ pelo multiplicador B3
         val_pt = MULT["WDO" if r_ativo == "WDO" else "WIN"]
