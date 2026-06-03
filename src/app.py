@@ -1018,6 +1018,10 @@ st.markdown("""
 html,body,[data-testid="stAppViewContainer"]{background:#0a0e1a!important;color:#e2e8f0!important;font-family:'Space Grotesk',sans-serif!important}
 [data-testid="stSidebar"],[data-testid="stHeader"]{display:none!important}
 .block-container{padding:0!important;max-width:100%!important}
+/* Compacta o espaço vertical entre blocos do Streamlit */
+[data-testid="stVerticalBlock"]{gap:.5rem!important}
+[data-testid="stElementContainer"]{margin:0!important}
+.main-wrap [data-testid="stMarkdownContainer"] p{margin:0!important}
 
 /* ── TICKER TAPE ── */
 .ticker-wrap{
@@ -1054,7 +1058,7 @@ html,body,[data-testid="stAppViewContainer"]{background:#0a0e1a!important;color:
 .ti-nt{color:#64748b}
 
 /* ── MAIN WRAP ── */
-.main-wrap{padding:1.2rem 2rem;max-width:1400px;margin:0 auto}
+.main-wrap{padding:.8rem 1.2rem;max-width:1500px;margin:0 auto}
 
 /* ── HEADER ── */
 .header-box{
@@ -1119,8 +1123,8 @@ html,body,[data-testid="stAppViewContainer"]{background:#0a0e1a!important;color:
 .tab-periodo tr:last-child td{border-bottom:none}
 
 /* ── UTILITÁRIOS ── */
-.sec-title{font-size:1.05rem;font-weight:700;color:#f1f5f9;margin:1.2rem 0 .7rem;display:flex;align-items:center;gap:.5rem}
-.sec-divider{height:1px;background:#1e293b;margin:.8rem 0}
+.sec-title{font-size:1rem;font-weight:700;color:#f1f5f9;margin:.8rem 0 .5rem;display:flex;align-items:center;gap:.5rem}
+.sec-divider{height:1px;background:#1e293b;margin:.6rem 0}
 .scroll-wrapper{overflow-x:auto;padding-bottom:.4rem;scrollbar-width:thin;scrollbar-color:#1e293b transparent}
 .scroll-wrapper::-webkit-scrollbar{height:4px}
 .scroll-wrapper::-webkit-scrollbar-thumb{background:#1e293b;border-radius:4px}
@@ -1949,5 +1953,28 @@ if st.session_state.get("diario_liberado"):
                 if st.button("🗑️", key=f"del_{t['id']}"):
                     db_deletar_trade(t["id"])
                     st.rerun()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RODAPÉ — Divulgação do curso (todas as abas)
+# ══════════════════════════════════════════════════════════════════════════════
+st.markdown("""
+<a href="https://go.hotmart.com/K105904656Q" target="_blank" style="text-decoration:none">
+  <div style="background:linear-gradient(135deg,#0a1628,#0f172a);border:1px solid #1e3a8a;border-radius:14px;
+       padding:1.1rem 1.4rem;margin-top:1.5rem;display:flex;align-items:center;gap:1.1rem;flex-wrap:wrap;
+       transition:all .2s" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='#1e3a8a'">
+    <div style="font-size:2rem">🎓</div>
+    <div style="flex:1;min-width:200px">
+      <div style="font-size:.95rem;font-weight:700;color:#f1f5f9;margin-bottom:.2rem">Guia Mestre de Day Trade em WIN e WDO</div>
+      <div style="font-size:.78rem;color:#94a3b8;line-height:1.4">Curso completo: médias móveis, Fibonacci, gestão de risco e psicologia do trader. Aprenda o método por trás desta ferramenta.</div>
+    </div>
+    <div style="background:#0066ff;color:#fff;border-radius:8px;padding:.6rem 1.2rem;font-size:.85rem;font-weight:700;white-space:nowrap">
+      Conhecer o curso →
+    </div>
+  </div>
+</a>
+<div style="font-size:.62rem;color:#475569;text-align:center;margin-top:.5rem;line-height:1.5">
+  ⚠️ Operar day trade envolve risco de perda. A maioria dos traders perde dinheiro. Resultados passados não garantem resultados futuros. Esta ferramenta é educacional e não constitui recomendação de investimento.
+</div>
+""", unsafe_allow_html=True)
 
 st.markdown('</div>', unsafe_allow_html=True)
