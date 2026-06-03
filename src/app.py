@@ -1716,18 +1716,17 @@ if st.session_state.get("diario_liberado"):
     # ── CONTADOR DE ACESSOS (visível só na área restrita) ─────────────────────
     try:
         ac = db_stats_acessos()
-        ca1, ca2 = st.columns(2)
-        ca1.markdown(
-            f'<div style="background:linear-gradient(135deg,#0a1628,#0f172a);border:1px solid #1e3a8a;border-radius:10px;padding:.8rem 1.1rem">'
-            f'<div style="font-size:.62rem;color:#60a5fa;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem">👥 Acessos totais</div>'
-            f'<div style="font-size:1.5rem;font-weight:700;color:#f1f5f9;font-family:\'JetBrains Mono\',monospace">{ac["total"]:,}</div></div>',
+        st.markdown(
+            f'<div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-bottom:.3rem">'
+            f'<div style="background:linear-gradient(135deg,#0a1628,#0f172a);border:1px solid #1e3a8a;border-radius:10px;padding:.55rem .9rem;min-width:130px">'
+            f'<div style="font-size:.58rem;color:#60a5fa;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.1rem">👥 Acessos totais</div>'
+            f'<div style="font-size:1.3rem;font-weight:700;color:#f1f5f9;font-family:\'JetBrains Mono\',monospace">{ac["total"]:,}</div></div>'
+            f'<div style="background:linear-gradient(135deg,#0a1628,#0f172a);border:1px solid #1e3a8a;border-radius:10px;padding:.55rem .9rem;min-width:130px">'
+            f'<div style="font-size:.58rem;color:#60a5fa;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.1rem">📅 Acessos hoje</div>'
+            f'<div style="font-size:1.3rem;font-weight:700;color:#f1f5f9;font-family:\'JetBrains Mono\',monospace">{ac["hoje"]:,}</div></div>'
+            f'</div>',
             unsafe_allow_html=True)
-        ca2.markdown(
-            f'<div style="background:linear-gradient(135deg,#0a1628,#0f172a);border:1px solid #1e3a8a;border-radius:10px;padding:.8rem 1.1rem">'
-            f'<div style="font-size:.62rem;color:#60a5fa;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem">📅 Acessos hoje</div>'
-            f'<div style="font-size:1.5rem;font-weight:700;color:#f1f5f9;font-family:\'JetBrains Mono\',monospace">{ac["hoje"]:,}</div></div>',
-            unsafe_allow_html=True)
-        st.markdown('<div style="font-size:.64rem;color:#475569;margin:.3rem 0 .8rem">Contagem por sessão. Reinicia se o app reiniciar (será permanente com o login/Supabase).</div>', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:.6rem;color:#475569;margin:.1rem 0 .6rem">Contagem por sessão. Permanente com o login (em breve).</div>', unsafe_allow_html=True)
     except Exception:
         pass
 
@@ -1983,23 +1982,35 @@ if st.session_state.get("diario_liberado"):
 # ══════════════════════════════════════════════════════════════════════════════
 # RODAPÉ — Divulgação do curso (todas as abas)
 # ══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# RODAPÉ — Divulgação do curso (card compacto em destaque)
+# ══════════════════════════════════════════════════════════════════════════════
 st.markdown("""
+<style>
+@keyframes seta-sobe{0%{stroke-dashoffset:120}100%{stroke-dashoffset:0}}
+@keyframes pulso-curso{0%,100%{box-shadow:0 0 0 0 rgba(0,102,255,.35)}50%{box-shadow:0 0 0 6px rgba(0,102,255,0)}}
+.card-curso{background:linear-gradient(135deg,#0a1628,#0f172a);border:1px solid #1e3a8a;border-radius:14px;
+   padding:1rem 1.2rem;margin-top:1rem;display:flex;align-items:center;gap:1rem;max-width:520px;
+   transition:all .2s;animation:pulso-curso 2.8s infinite}
+.card-curso:hover{border-color:#3b82f6;transform:translateY(-2px)}
+.card-curso svg path{stroke-dasharray:120;animation:seta-sobe 2s ease-out infinite}
+</style>
 <a href="https://go.hotmart.com/K105904656Q?dp=1" target="_blank" style="text-decoration:none">
-  <div style="background:linear-gradient(135deg,#0a1628,#0f172a);border:1px solid #1e3a8a;border-radius:14px;
-       padding:1.1rem 1.4rem;margin-top:1.5rem;display:flex;align-items:center;gap:1.1rem;flex-wrap:wrap;
-       transition:all .2s" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='#1e3a8a'">
-    <div style="font-size:2rem">🎓</div>
-    <div style="flex:1;min-width:200px">
-      <div style="font-size:.95rem;font-weight:700;color:#f1f5f9;margin-bottom:.2rem">Guia Mestre de Day Trade em WIN e WDO</div>
-      <div style="font-size:.78rem;color:#94a3b8;line-height:1.4">Curso completo: médias móveis, Fibonacci, gestão de risco e psicologia do trader. Aprenda o método por trás desta ferramenta.</div>
+  <div class="card-curso">
+    <svg width="46" height="46" viewBox="0 0 46 46" fill="none">
+      <rect width="46" height="46" rx="10" fill="#0066ff" opacity="0.12"/>
+      <path d="M10 32 L20 24 L27 28 L36 14" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <path d="M30 14 L36 14 L36 20" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </svg>
+    <div style="flex:1">
+      <div style="font-size:.9rem;font-weight:700;color:#f1f5f9;margin-bottom:.15rem">🎓 Guia Mestre de Day Trade</div>
+      <div style="font-size:.72rem;color:#94a3b8;line-height:1.35">Aprenda o método WIN &amp; WDO por trás desta ferramenta</div>
     </div>
-    <div style="background:#0066ff;color:#fff;border-radius:8px;padding:.6rem 1.2rem;font-size:.85rem;font-weight:700;white-space:nowrap">
-      Conhecer o curso →
-    </div>
+    <div style="background:#0066ff;color:#fff;border-radius:8px;padding:.5rem .9rem;font-size:.8rem;font-weight:700;white-space:nowrap">Ver curso →</div>
   </div>
 </a>
-<div style="font-size:.62rem;color:#475569;text-align:center;margin-top:.5rem;line-height:1.5">
-  ⚠️ Operar day trade envolve risco de perda. A maioria dos traders perde dinheiro. Resultados passados não garantem resultados futuros. Esta ferramenta é educacional e não constitui recomendação de investimento.
+<div style="font-size:.6rem;color:#475569;margin-top:.4rem;max-width:520px;line-height:1.4">
+  ⚠️ Operar day trade envolve risco de perda. A maioria dos traders perde dinheiro. Conteúdo educacional, não é recomendação de investimento.
 </div>
 """, unsafe_allow_html=True)
 
