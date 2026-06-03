@@ -1033,6 +1033,22 @@ html,body,[data-testid="stAppViewContainer"]{background:#0a0e1a!important;color:
 /* Botões mais compactos */
 [data-testid="stButton"] button{padding:.35rem .9rem!important;font-size:.85rem!important}
 
+/* ── COMPACTAÇÃO AGRESSIVA DAS GRADES ── */
+/* Grade de cotações mais densa */
+.grade-row{gap:.35rem!important;margin-bottom:.2rem!important}
+.grade-cel{padding:.4rem .6rem!important}
+.grade-grupo-label{margin:.45rem 0 .25rem!important}
+/* Cards de scroll/notícias mais justos */
+.noticia-card{padding:.6rem .8rem!important;margin-bottom:.4rem!important}
+/* Reduz respiro das colunas */
+[data-testid="stHorizontalBlock"]{gap:.6rem!important}
+/* Espaço entre seções markdown ainda menor */
+.sec-title{margin:.6rem 0 .35rem!important}
+.sec-divider{margin:.45rem 0!important}
+/* Checkbox e radio mais compactos */
+[data-testid="stCheckbox"],[data-testid="stRadio"]{margin-bottom:.1rem!important}
+[data-testid="stRadio"] label{font-size:.82rem!important}
+
 /* ── TICKER TAPE ── */
 .ticker-wrap{
     width:100%;background:#0b1120;border-bottom:1px solid #1e293b;
