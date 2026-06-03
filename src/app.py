@@ -852,6 +852,27 @@ def fmt_preco(p):
 st.set_page_config(page_title="MestreDoDayTrade Pro", page_icon="📈",
                    layout="wide", initial_sidebar_state="collapsed")
 
+# ── GOOGLE ANALYTICS (rastreamento de acessos) ───────────────────────────────
+def injetar_analytics():
+    try:
+        ga_id = st.secrets.get("GA_ID", "")
+    except Exception:
+        ga_id = ""
+    if not ga_id:
+        return
+    ga_code = f"""
+    <script async src="https://www.googletagmanager.com/gtag/js?id={ga_id}"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){{dataLayer.push(arguments);}}
+      gtag('js', new Date());
+      gtag('config', '{ga_id}');
+    </script>
+    """
+    st.components.v1.html(ga_code, height=0)
+
+injetar_analytics()
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
@@ -1492,6 +1513,30 @@ with tab3:
 # TAB 4 — DIÁRIO & SCORE
 # ══════════════════════════════════════════════════════════════════════════════
 with tab4:
+    # ── CADEADO: diário privado até implementarmos login por usuário ──────────
+    if "diario_liberado" not in st.session_state:
+        st.session_state.diario_liberado = False
+
+    if not st.session_state.diario_liberado:
+        st.markdown('<div class="sec-title" style="margin-top:.3rem">🔒 Área Privada — Diário & Score</div>', unsafe_allow_html=True)
+        st.markdown('<div style="background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:1.2rem 1.4rem;margin-bottom:1rem;color:#94a3b8;font-size:.88rem;line-height:1.6">'
+                    '📒 O Diário de Operações e o Score de Trader são pessoais.<br>'
+                    '<b style="color:#60a5fa">Em breve liberado para todos os usuários</b>, cada um com seu diário privado e login individual.<br>'
+                    'Por enquanto, esta área é restrita.</div>', unsafe_allow_html=True)
+        senha = st.text_input("Senha de acesso", type="password", key="senha_diario")
+        if st.button("🔓  Entrar"):
+            try:
+                senha_correta = st.secrets["DIARIO_SENHA"]
+            except Exception:
+                senha_correta = "mestre2026"  # fallback se não configurar nos secrets
+            if senha == senha_correta:
+                st.session_state.diario_liberado = True
+                st.rerun()
+            else:
+                st.error("Senha incorreta.")
+
+if st.session_state.get("diario_liberado"):
+  with tab4:
     sub_reg, sub_stats = st.columns([1, 1])
 
     # ── REGISTRAR OPERAÇÃO ────────────────────────────────────────────────────
