@@ -1023,7 +1023,9 @@ html,body,[data-testid="stAppViewContainer"]{background:#0a0e1a!important;color:
 [data-testid="stElementContainer"]{margin:0!important}
 .main-wrap [data-testid="stMarkdownContainer"] p{margin:0!important}
 /* Limita a largura útil do app (evita campos esticados em tela larga) */
-[data-testid="stMainBlockContainer"]{max-width:1500px!important;margin:0 auto!important;padding:.6rem 1.2rem!important}
+[data-testid="stMainBlockContainer"],[data-testid="stAppViewBlockContainer"],
+section.main > div.block-container,.main .block-container,
+[data-testid="block-container"]{max-width:1100px!important;margin:0 auto!important;padding:.6rem 1.2rem!important}
 /* Compacta inputs, selects e textareas */
 [data-testid="stTextInput"] input,[data-testid="stNumberInput"] input,[data-testid="stDateInput"] input,
 [data-baseweb="select"]{min-height:34px!important;font-size:.85rem!important}
