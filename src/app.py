@@ -1022,6 +1022,16 @@ html,body,[data-testid="stAppViewContainer"]{background:#0a0e1a!important;color:
 [data-testid="stVerticalBlock"]{gap:.5rem!important}
 [data-testid="stElementContainer"]{margin:0!important}
 .main-wrap [data-testid="stMarkdownContainer"] p{margin:0!important}
+/* Limita a largura útil do app (evita campos esticados em tela larga) */
+[data-testid="stMainBlockContainer"]{max-width:1500px!important;margin:0 auto!important;padding:.6rem 1.2rem!important}
+/* Compacta inputs, selects e textareas */
+[data-testid="stTextInput"] input,[data-testid="stNumberInput"] input,[data-testid="stDateInput"] input,
+[data-baseweb="select"]{min-height:34px!important;font-size:.85rem!important}
+[data-testid="stTextInput"],[data-testid="stNumberInput"],[data-testid="stSelectbox"],[data-testid="stDateInput"]{margin-bottom:.2rem!important}
+/* Labels menores e mais justos */
+[data-testid="stWidgetLabel"] p{font-size:.78rem!important;margin-bottom:.1rem!important}
+/* Botões mais compactos */
+[data-testid="stButton"] button{padding:.35rem .9rem!important;font-size:.85rem!important}
 
 /* ── TICKER TAPE ── */
 .ticker-wrap{
@@ -1958,7 +1968,7 @@ if st.session_state.get("diario_liberado"):
 # RODAPÉ — Divulgação do curso (todas as abas)
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("""
-<a href="https://go.hotmart.com/K105904656Q" target="_blank" style="text-decoration:none">
+<a href="https://go.hotmart.com/K105904656Q?dp=1" target="_blank" style="text-decoration:none">
   <div style="background:linear-gradient(135deg,#0a1628,#0f172a);border:1px solid #1e3a8a;border-radius:14px;
        padding:1.1rem 1.4rem;margin-top:1.5rem;display:flex;align-items:center;gap:1.1rem;flex-wrap:wrap;
        transition:all .2s" onmouseover="this.style.borderColor='#3b82f6'" onmouseout="this.style.borderColor='#1e3a8a'">
