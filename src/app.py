@@ -126,8 +126,31 @@ def db_init():
             criado_em   TEXT NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS acessos (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            data      TEXT NOT NULL,
+            momento   TEXT NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
+
+def db_registrar_acesso():
+    conn = db_conn()
+    hoje = datetime.now(BR_TZ)
+    conn.execute("INSERT INTO acessos (data, momento) VALUES (?,?)",
+                 (hoje.strftime("%Y-%m-%d"), hoje.isoformat()))
+    conn.commit()
+    conn.close()
+
+def db_stats_acessos():
+    conn = db_conn()
+    total = conn.execute("SELECT COUNT(*) FROM acessos").fetchone()[0]
+    hoje = datetime.now(BR_TZ).strftime("%Y-%m-%d")
+    hoje_n = conn.execute("SELECT COUNT(*) FROM acessos WHERE data = ?", (hoje,)).fetchone()[0]
+    conn.close()
+    return {"total": total, "hoje": hoje_n}
 
 def db_add_trade(d):
     conn = db_conn()
@@ -248,21 +271,25 @@ def calcular_score(stats):
     }
 
 # ── ESCALONAMENTO DE CONTRATOS (por pontos acumulados) ────────────────────────
-ESCALA = {
+ESCALA_PADRAO = {
     "WIN": [(5000,1),(7500,2),(10000,3),(12500,4),(15000,5)],
     "WDO": [(200,1),(300,2),(400,3),(500,4),(600,5)],
 }
 
-def calcular_escalonamento(trades):
-    """Soma pontos acumulados por ativo e determina contratos liberados."""
+def calcular_escalonamento(trades, escala=None):
+    """Soma pontos acumulados por ativo e determina contratos liberados.
+    'escala' é um dict {ativo: [(pontos, contratos), ...]}; usa o padrão se None."""
+    if escala is None:
+        escala = ESCALA_PADRAO
     acum = {"WIN": 0.0, "WDO": 0.0}
     for t in trades:
         a = t.get("ativo")
         if a in acum:
             acum[a] += t.get("pontos", 0)
     res = {}
-    for ativo, faixas in ESCALA.items():
-        pts = acum[ativo]
+    for ativo, faixas in escala.items():
+        faixas = sorted(faixas, key=lambda x: x[0])  # ordena por pontos
+        pts = acum.get(ativo, 0)
         contratos = 0
         proxima = None
         for limiar, c in faixas:
@@ -1217,6 +1244,15 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 db_init()
+
+# Conta 1 acesso por sessão (visita única)
+if "acesso_contado" not in st.session_state:
+    try:
+        db_registrar_acesso()
+    except Exception:
+        pass
+    st.session_state.acesso_contado = True
+
 tab1, tab2, tab3, tab4 = st.tabs([
     "🌍  Mercados & Notícias",
     "🛡️  Gerenciamento de Risco",
@@ -1647,6 +1683,24 @@ with tab4:
 
 if st.session_state.get("diario_liberado"):
   with tab4:
+    # ── CONTADOR DE ACESSOS (visível só na área restrita) ─────────────────────
+    try:
+        ac = db_stats_acessos()
+        ca1, ca2 = st.columns(2)
+        ca1.markdown(
+            f'<div style="background:linear-gradient(135deg,#0a1628,#0f172a);border:1px solid #1e3a8a;border-radius:10px;padding:.8rem 1.1rem">'
+            f'<div style="font-size:.62rem;color:#60a5fa;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem">👥 Acessos totais</div>'
+            f'<div style="font-size:1.5rem;font-weight:700;color:#f1f5f9;font-family:\'JetBrains Mono\',monospace">{ac["total"]:,}</div></div>',
+            unsafe_allow_html=True)
+        ca2.markdown(
+            f'<div style="background:linear-gradient(135deg,#0a1628,#0f172a);border:1px solid #1e3a8a;border-radius:10px;padding:.8rem 1.1rem">'
+            f'<div style="font-size:.62rem;color:#60a5fa;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem">📅 Acessos hoje</div>'
+            f'<div style="font-size:1.5rem;font-weight:700;color:#f1f5f9;font-family:\'JetBrains Mono\',monospace">{ac["hoje"]:,}</div></div>',
+            unsafe_allow_html=True)
+        st.markdown('<div style="font-size:.64rem;color:#475569;margin:.3rem 0 .8rem">Contagem por sessão. Reinicia se o app reiniciar (será permanente com o login/Supabase).</div>', unsafe_allow_html=True)
+    except Exception:
+        pass
+
     sub_reg, sub_stats = st.columns([1, 1])
 
     # ── REGISTRAR OPERAÇÃO ────────────────────────────────────────────────────
@@ -1768,10 +1822,45 @@ if st.session_state.get("diario_liberado"):
             st.markdown(html_diag, unsafe_allow_html=True)
 
         # ── ESCALONAMENTO DE CONTRATOS (acumulado total) ──────────────────────
-        trades_tudo = db_listar_trades(5000)
-        esc = calcular_escalonamento(trades_tudo)
         st.markdown('<div class="sec-title" style="font-size:.95rem;margin-top:1rem">📈 Escalonamento de Contratos</div>', unsafe_allow_html=True)
-        st.markdown('<div style="font-size:.72rem;color:#64748b;margin-bottom:.5rem">Baseado nos pontos acumulados (total). Suba de mão só ao atingir cada faixa.</div>', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:.72rem;color:#64748b;margin-bottom:.5rem">Baseado nos pontos acumulados (total). Cada trader configura a própria escada.</div>', unsafe_allow_html=True)
+
+        # Escada personalizada (guardada na sessão)
+        if "escala_win" not in st.session_state:
+            st.session_state.escala_win = [5000, 7500, 10000, 12500, 15000]
+        if "escala_wdo" not in st.session_state:
+            st.session_state.escala_wdo = [200, 300, 400, 500, 600]
+
+        with st.expander("⚙️ Configurar minha escada de contratos"):
+            st.markdown('<div style="font-size:.78rem;color:#94a3b8;margin-bottom:.5rem">Defina quantos pontos acumulados liberam cada quantidade de contratos. Cada um faz a sua.</div>', unsafe_allow_html=True)
+            cfg1, cfg2 = st.columns(2)
+            nova_win, nova_wdo = [], []
+            with cfg1:
+                st.markdown("**WINFUT**")
+                for i in range(5):
+                    nova_win.append(st.number_input(f"{i+1} contrato(s) a partir de (pts)", min_value=0,
+                                                     value=int(st.session_state.escala_win[i]),
+                                                     step=500, key=f"cfg_win_{i}"))
+            with cfg2:
+                st.markdown("**WDOFUT**")
+                for i in range(5):
+                    nova_wdo.append(st.number_input(f"{i+1} contrato(s) a partir de (pts)", min_value=0,
+                                                    value=int(st.session_state.escala_wdo[i]),
+                                                    step=50, key=f"cfg_wdo_{i}"))
+            if st.button("💾 Salvar minha escada"):
+                st.session_state.escala_win = nova_win
+                st.session_state.escala_wdo = nova_wdo
+                st.success("Escada atualizada!")
+                st.rerun()
+            st.markdown('<div style="font-size:.66rem;color:#475569;margin-top:.4rem">⚠️ Por enquanto a configuração vale só nesta sessão. Com o login (em breve) ela ficará salva na sua conta.</div>', unsafe_allow_html=True)
+
+        # Monta a escala a partir da config da sessão
+        escala_user = {
+            "WIN": [(st.session_state.escala_win[i], i+1) for i in range(5)],
+            "WDO": [(st.session_state.escala_wdo[i], i+1) for i in range(5)],
+        }
+        trades_tudo = db_listar_trades(5000)
+        esc = calcular_escalonamento(trades_tudo, escala_user)
         col_e1, col_e2 = st.columns(2)
         for col, ativo in zip([col_e1, col_e2], ["WIN", "WDO"]):
             e = esc[ativo]
@@ -1779,7 +1868,6 @@ if st.session_state.get("diario_liberado"):
             cont = e["contratos"]
             prox = e["proxima"]
             if cont == 0:
-                # ainda não atingiu a 1ª faixa
                 falta = prox[0] - pts if prox else 0
                 msg = f'<div style="font-size:.74rem;color:#f59e0b;margin-top:.3rem">Faltam <b>{falta:,.0f} pts</b> para liberar 1 contrato</div>'
                 cor_c = "#f59e0b"
