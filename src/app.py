@@ -247,6 +247,116 @@ def calcular_score(stats):
         "risco_retorno": round(rr_score),
     }
 
+# ── ESCALONAMENTO DE CONTRATOS (por pontos acumulados) ────────────────────────
+ESCALA = {
+    "WIN": [(5000,1),(7500,2),(10000,3),(12500,4),(15000,5)],
+    "WDO": [(200,1),(300,2),(400,3),(500,4),(600,5)],
+}
+
+def calcular_escalonamento(trades):
+    """Soma pontos acumulados por ativo e determina contratos liberados."""
+    acum = {"WIN": 0.0, "WDO": 0.0}
+    for t in trades:
+        a = t.get("ativo")
+        if a in acum:
+            acum[a] += t.get("pontos", 0)
+    res = {}
+    for ativo, faixas in ESCALA.items():
+        pts = acum[ativo]
+        contratos = 0
+        proxima = None
+        for limiar, c in faixas:
+            if pts >= limiar:
+                contratos = c
+            else:
+                proxima = (limiar, c)
+                break
+        res[ativo] = {
+            "pontos": pts,
+            "contratos": contratos,
+            "proxima": proxima,  # (pontos_necessarios, contratos) ou None
+        }
+    return res
+
+# ── DIAGNÓSTICO AUTOMÁTICO ────────────────────────────────────────────────────
+def gerar_diagnostico(stats, score):
+    """Classifica os indicadores em Ponto Forte / Atenção / Erro Crítico / Próxima Ação."""
+    fortes, atencao, criticos, acoes = [], [], [], []
+
+    # Gestão de risco
+    if score["gestao"] >= 80:
+        fortes.append(f"Gestão de risco {score['gestao']}/100 — você protege bem o capital")
+    elif score["gestao"] >= 60:
+        atencao.append(f"Gestão de risco {score['gestao']}/100 — dá pra melhorar")
+    else:
+        criticos.append(f"Gestão de risco {score['gestao']}/100 — frágil")
+
+    # Profit Factor
+    pf = stats["profit_factor"]
+    if pf >= 1.5:
+        fortes.append(f"Profit Factor {pf:.2f} — seus ganhos superam bem as perdas")
+    elif pf >= 1.0:
+        atencao.append(f"Profit Factor {pf:.2f} — positivo, mas com pouca margem (meta: 1,5)")
+    else:
+        criticos.append(f"Profit Factor {pf:.2f} — você perde mais do que ganha")
+        acoes.append("Elevar o Profit Factor acima de 1,2 — corte perdas mais cedo e deixe ganhos correrem")
+
+    # Assertividade
+    ass = stats["assertividade"]
+    if ass >= 60:
+        fortes.append(f"Assertividade {ass:.0f}% — boa taxa de acerto")
+    elif ass >= 45:
+        atencao.append(f"Assertividade {ass:.0f}% — na média, refine os pontos de entrada")
+    else:
+        criticos.append(f"Assertividade {ass:.0f}% — taxa de acerto baixa")
+
+    # Risco/Retorno
+    rr = stats["rr_medio"]
+    if rr >= 1.5:
+        fortes.append(f"Risco/Retorno 1:{rr:.1f} — excelente relação")
+    elif rr >= 1.0:
+        atencao.append(f"Risco/Retorno 1:{rr:.1f} — aceitável, busque 1:2")
+    else:
+        criticos.append(f"Risco/Retorno 1:{rr:.1f} — seus alvos são menores que seus stops")
+        acoes.append("Buscar relação risco/retorno de no mínimo 1:1,5 por operação")
+
+    # Overtrade
+    if stats["dias_overtrade"] > 0:
+        criticos.append(f"Overtrade em {stats['dias_overtrade']} dia(s) — excesso de operações")
+        acoes.append("Limitar a no máximo 3-4 operações por pregão")
+
+    # Esticar stop
+    if stats["esticou_stop"] > 0:
+        atencao.append(f"Stop esticado {stats['esticou_stop']}x — custou R$ {stats['perda_por_esticar']:.2f}")
+        acoes.append("Respeitar o stop inicial — nunca aumentar a perda planejada")
+
+    if not acoes:
+        acoes.append("Manter a consistência e registrar todas as operações")
+
+    return {"fortes": fortes, "atencao": atencao, "criticos": criticos, "acoes": acoes}
+
+# ── RANKING DE VAZAMENTOS (maiores fontes de perda) ───────────────────────────
+def ranking_vazamentos(trades):
+    vaz = {}
+    # Por esticar stop
+    perda_stop = abs(sum(t["resultado"] for t in trades if t.get("esticou_stop") and t["resultado"] < 0))
+    if perda_stop > 0:
+        vaz["Stop alongado"] = perda_stop
+    # Por operar fora do setup
+    perda_setup = abs(sum(t["resultado"] for t in trades if not t.get("seguiu_setup") and t["resultado"] < 0))
+    if perda_setup > 0:
+        vaz["Operar fora do setup"] = perda_setup
+    # Por overtrade: perdas em dias com mais de 4 trades
+    cont_dia = {}
+    for t in trades:
+        cont_dia.setdefault(t["data"], []).append(t)
+    perda_over = 0
+    for dia, ts in cont_dia.items():
+        if len(ts) > 4:
+            perda_over += abs(sum(t["resultado"] for t in ts if t["resultado"] < 0))
+    if perda_over > 0:
+        vaz["Overtrade"] = perda_over
+    return sorted(vaz.items(), key=lambda x: x[1], reverse=True)
 
 
 # ── IA ────────────────────────────────────────────────────────────────────────
@@ -1637,33 +1747,89 @@ if st.session_state.get("diario_liberado"):
         for col, (lbl, val, cor) in zip(cols2, metricas2):
             col.markdown(f'<div style="background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:.8rem 1rem;margin-top:.5rem"><div style="font-size:.62rem;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.25rem">{lbl}</div><div style="font-size:1.15rem;font-weight:700;color:{cor};font-family:\'JetBrains Mono\',monospace">{val}</div></div>', unsafe_allow_html=True)
 
-        # ── ERROS COMPORTAMENTAIS DETECTADOS ──────────────────────────────────
-        st.markdown('<div class="sec-title" style="font-size:.95rem;margin-top:1rem">⚠️ Erros Detectados</div>', unsafe_allow_html=True)
-        erros = []
-        if stats["esticou_stop"] > 0:
-            erros.append(f"🔴 Stop esticado <b>{stats['esticou_stop']}x</b> — perda de R$ {stats['perda_por_esticar']:,.2f} por esticar stop")
-        if stats["dias_overtrade"] > 0:
-            erros.append(f"🟠 Overtrade em <b>{stats['dias_overtrade']} dia(s)</b> — mais de 4 operações no mesmo dia")
-        if stats["fora_setup"] > 0:
-            erros.append(f"🟡 <b>{stats['fora_setup']}</b> operação(ões) fora do setup planejado")
-        if not erros:
-            erros.append("🟢 Nenhum erro comportamental grave detectado. Continue assim!")
-        for e in erros:
-            st.markdown(f'<div style="background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:.6rem .9rem;margin-bottom:.4rem;font-size:.83rem;color:#cbd5e1">{e}</div>', unsafe_allow_html=True)
+        # ── DIAGNÓSTICO AUTOMÁTICO ────────────────────────────────────────────
+        if score:
+            diag = gerar_diagnostico(stats, score)
+            st.markdown('<div class="sec-title" style="font-size:.95rem;margin-top:1rem">🩺 Diagnóstico do Trader</div>', unsafe_allow_html=True)
 
-        # ── ANÁLISE COMPORTAMENTAL VIA IA ─────────────────────────────────────
-        if st.button("🧠  Analisar meu comportamento com a IA"):
+            def bloco_diag(titulo, itens, cor, bg):
+                if not itens:
+                    return ""
+                linhas = "".join(f'<div style="font-size:.8rem;color:#cbd5e1;margin:.2rem 0">• {i}</div>' for i in itens)
+                return (f'<div style="background:{bg};border:1px solid {cor}40;border-left:3px solid {cor};border-radius:8px;padding:.7rem .9rem;margin-bottom:.5rem">'
+                        f'<div style="font-size:.72rem;font-weight:700;color:{cor};text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem">{titulo}</div>{linhas}</div>')
+
+            html_diag = (
+                bloco_diag("🟢 Pontos Fortes", diag["fortes"], "#22c55e", "rgba(34,197,94,.06)") +
+                bloco_diag("🟡 Pontos de Atenção", diag["atencao"], "#f59e0b", "rgba(245,158,11,.06)") +
+                bloco_diag("🔴 Erros Críticos", diag["criticos"], "#ef4444", "rgba(239,68,68,.06)") +
+                bloco_diag("🎯 Próximas Ações", diag["acoes"], "#0066ff", "rgba(0,102,255,.06)")
+            )
+            st.markdown(html_diag, unsafe_allow_html=True)
+
+        # ── ESCALONAMENTO DE CONTRATOS (acumulado total) ──────────────────────
+        trades_tudo = db_listar_trades(5000)
+        esc = calcular_escalonamento(trades_tudo)
+        st.markdown('<div class="sec-title" style="font-size:.95rem;margin-top:1rem">📈 Escalonamento de Contratos</div>', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:.72rem;color:#64748b;margin-bottom:.5rem">Baseado nos pontos acumulados (total). Suba de mão só ao atingir cada faixa.</div>', unsafe_allow_html=True)
+        col_e1, col_e2 = st.columns(2)
+        for col, ativo in zip([col_e1, col_e2], ["WIN", "WDO"]):
+            e = esc[ativo]
+            pts = e["pontos"]
+            cont = e["contratos"]
+            prox = e["proxima"]
+            if cont == 0:
+                # ainda não atingiu a 1ª faixa
+                falta = prox[0] - pts if prox else 0
+                msg = f'<div style="font-size:.74rem;color:#f59e0b;margin-top:.3rem">Faltam <b>{falta:,.0f} pts</b> para liberar 1 contrato</div>'
+                cor_c = "#f59e0b"
+            elif prox:
+                falta = prox[0] - pts
+                msg = f'<div style="font-size:.74rem;color:#94a3b8;margin-top:.3rem">Faltam <b>{falta:,.0f} pts</b> para {prox[1]} contratos</div>'
+                cor_c = "#22c55e"
+            else:
+                msg = '<div style="font-size:.74rem;color:#22c55e;margin-top:.3rem">Faixa máxima atingida! 🏆</div>'
+                cor_c = "#22c55e"
+            col.markdown(
+                f'<div style="background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:.9rem 1.1rem">'
+                f'<div style="font-size:.7rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em">{ativo}FUT</div>'
+                f'<div style="display:flex;align-items:baseline;gap:.5rem;margin:.2rem 0">'
+                f'<span style="font-size:1.8rem;font-weight:700;color:{cor_c};font-family:\'JetBrains Mono\',monospace">{cont}</span>'
+                f'<span style="font-size:.8rem;color:#94a3b8">contrato(s) liberado(s)</span></div>'
+                f'<div style="font-size:.72rem;color:#64748b">Acumulado: <b style="color:#cbd5e1;font-family:\'JetBrains Mono\',monospace">{pts:,.0f} pts</b></div>'
+                f'{msg}</div>', unsafe_allow_html=True)
+
+        # ── RANKING DE VAZAMENTOS ─────────────────────────────────────────────
+        vaz = ranking_vazamentos(trades)
+        if vaz:
+            st.markdown('<div class="sec-title" style="font-size:.95rem;margin-top:1rem">💸 Seus Maiores Vazamentos</div>', unsafe_allow_html=True)
+            medalhas = ["🥇","🥈","🥉","4️⃣","5️⃣"]
+            for i, (nome, valor) in enumerate(vaz[:5]):
+                st.markdown(
+                    f'<div style="background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:.55rem .9rem;margin-bottom:.4rem;display:flex;justify-content:space-between;align-items:center">'
+                    f'<span style="font-size:.84rem;color:#e2e8f0">{medalhas[i]} {nome}</span>'
+                    f'<span style="font-size:.9rem;font-weight:700;color:#ef4444;font-family:\'JetBrains Mono\',monospace">−R$ {valor:,.2f}</span>'
+                    f'</div>', unsafe_allow_html=True)
+
+        # ── COACH + ANÁLISE COMPORTAMENTAL VIA IA ─────────────────────────────
+        if st.button("🧠  Coach de Performance — análise completa com IA"):
+            esc_txt = (f"Escalonamento: WIN {esc['WIN']['pontos']:.0f}pts acumulados ({esc['WIN']['contratos']} contratos liberados), "
+                       f"WDO {esc['WDO']['pontos']:.0f}pts ({esc['WDO']['contratos']} contratos).")
             resumo = (f"Trader com {stats['n']} operações no período. "
                       f"Resultado: R${stats['lucro_total']:.2f}. Assertividade: {stats['assertividade']:.1f}%. "
                       f"Profit factor: {stats['profit_factor']:.2f}. RR médio: 1:{stats['rr_medio']:.1f}. "
+                      f"Score geral: {score['geral'] if score else 'N/A'}/100. "
                       f"Esticou stop {stats['esticou_stop']}x (perda R${stats['perda_por_esticar']:.2f}). "
                       f"Overtrade em {stats['dias_overtrade']} dias. Fora do setup {stats['fora_setup']}x. "
-                      f"Melhor dia R${stats['melhor_dia']:.2f}, pior dia R${stats['pior_dia']:.2f}.")
-            with st.spinner("IA analisando seu comportamento…"):
+                      f"Melhor dia R${stats['melhor_dia']:.2f}, pior dia R${stats['pior_dia']:.2f}. {esc_txt}")
+            with st.spinner("Coach analisando sua performance…"):
                 analise = ia(
-                    f"Analise o comportamento deste trader e dê 3-4 insights diretos e práticos para ele melhorar. Seja específico com os números. Dados: {resumo}",
+                    "Você é um coach de performance de day trade. Com base nos dados, NÃO repita só os números — "
+                    "transforme em DECISÕES e METAS práticas. Dê: 1 ponto forte para manter, o erro mais caro para "
+                    "corrigir já, e 2 metas concretas para a próxima semana (com números). Seja direto, fale como mentor. "
+                    f"Dados: {resumo}",
                     system=SYSTEM_PROMPT)
-            st.markdown(f'<div class="chat-msg-bot" style="max-width:100%">🧠 {html_mod.escape(analise)}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="chat-msg-bot" style="max-width:100%">🎯 {html_mod.escape(analise)}</div>', unsafe_allow_html=True)
 
     # ── HISTÓRICO DE OPERAÇÕES ────────────────────────────────────────────────
     st.markdown('<div class="sec-divider"></div><div class="sec-title">📋 Histórico de Operações</div>', unsafe_allow_html=True)
