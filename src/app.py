@@ -18,6 +18,42 @@ DB_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "diario_tra
 def agora_br():
     return datetime.now(BR_TZ).strftime("%d/%m/%Y %H:%M")
 
+# ── PAINEL DE HORÁRIOS DOS MERCADOS ──────────────────────────────────────────
+def status_mercados():
+    agora = datetime.now(BR_TZ)
+    wd = agora.weekday()   # 0=Seg … 4=Sex, 5=Sáb, 6=Dom
+    hm = agora.hour * 60 + agora.minute
+
+    def calc(ab_de, ab_ate, so_uteis=True):
+        if so_uteis and wd >= 5:
+            return "closed", "Fechado"
+        if ab_de <= hm < ab_ate:
+            return ("soon", "Fechando em breve") if hm >= ab_ate - 30 else ("open", "Aberto")
+        if ab_de - 30 <= hm < ab_de:
+            return "soon", "Abre em breve"
+        return "closed", "Fechado"
+
+    b3_acoes = calc(10*60,      17*60)
+    b3_fut   = calc(9*60,       17*60+55)
+    nm       = calc(9*60,       11*60)
+    nt       = calc(14*60,      17*60)
+    nyse     = calc(10*60+30,   17*60)
+
+    if   nm[0]=="open"  or nt[0]=="open":  nobre = ("open",   "Período nobre ativo")
+    elif nm[0]=="soon"  or nt[0]=="soon":  nobre = ("soon",   "Em breve")
+    else:                                   nobre = ("closed", "Fora do horário nobre")
+
+    forex_open = not (wd==5 or (wd==6 and hm < 18*60))
+    forex = ("open","Aberto 24h") if forex_open else ("closed","Fechado")
+
+    return [
+        {"nome":"B3 Ações",        "emoji":"🇧🇷","status":b3_acoes[0],"label":b3_acoes[1],"horario":"10h00–17h00"},
+        {"nome":"B3 Futuros",      "emoji":"📊", "status":b3_fut[0],  "label":b3_fut[1],  "horario":"09h00–17h55"},
+        {"nome":"Nobre WIN/WDO ⭐","emoji":"",   "status":nobre[0],   "label":nobre[1],   "horario":"9h-11h · 14h-17h"},
+        {"nome":"NYSE / Nasdaq",   "emoji":"🇺🇸","status":nyse[0],    "label":nyse[1],    "horario":"10h30–17h00"},
+        {"nome":"Forex / WDO ref", "emoji":"💱", "status":forex[0],   "label":forex[1],   "horario":"Dom 18h–Sex 17h"},
+    ]
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CALENDÁRIO ECONÔMICO — eventos macro que afetam WIN/WDO
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1051,6 +1087,19 @@ section.main > div.block-container,.main .block-container,
 [data-testid="stCheckbox"],[data-testid="stRadio"]{margin-bottom:.1rem!important}
 [data-testid="stRadio"] label{font-size:.82rem!important}
 
+/* ── PAINEL HORÁRIOS ── */
+.mkt-grid{display:flex;gap:.45rem;flex-wrap:wrap;margin-bottom:.5rem}
+.mkt-card{background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:.45rem .75rem;display:flex;align-items:center;gap:.55rem;flex:1;min-width:155px}
+.mkt-dot-open{width:9px;height:9px;border-radius:50%;background:#22c55e;flex-shrink:0;box-shadow:0 0 6px #22c55e;animation:live-pulse 1.8s ease-in-out infinite}
+.mkt-dot-closed{width:9px;height:9px;border-radius:50%;background:#ef4444;flex-shrink:0}
+.mkt-dot-soon{width:9px;height:9px;border-radius:50%;background:#f59e0b;flex-shrink:0;box-shadow:0 0 6px #f59e0b;animation:live-pulse 1.2s ease-in-out infinite}
+.mkt-info{flex:1;min-width:0}
+.mkt-nome{font-size:.63rem;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mkt-status-open{font-size:.74rem;font-weight:700;color:#22c55e;line-height:1.2}
+.mkt-status-closed{font-size:.74rem;font-weight:700;color:#ef4444;line-height:1.2}
+.mkt-status-soon{font-size:.74rem;font-weight:700;color:#f59e0b;line-height:1.2}
+.mkt-horario{font-size:.61rem;color:#475569;font-family:'JetBrains Mono',monospace}
+
 /* ── TICKER TAPE ── */
 .ticker-wrap{
     width:100%;background:#0b1120;border-bottom:1px solid #1e293b;
@@ -1302,6 +1351,24 @@ with tab1:
             st.cache_data.clear(); st.rerun()
     with col_info:
         st.markdown("<div style='color:#475569;font-size:.75rem;padding-top:.55rem'>Stooq · CoinGecko · Frankfurter · atualiza a cada 90s</div>", unsafe_allow_html=True)
+
+    # ── PAINEL DE HORÁRIOS ────────────────────────────────────────────────────
+    st.markdown('<div class="sec-title" style="margin-top:.2rem">🕐 Status dos Mercados</div>', unsafe_allow_html=True)
+    _mkt = status_mercados()
+    _mkt_html = '<div class="mkt-grid">'
+    for _m in _mkt:
+        _mkt_html += (
+            f'<div class="mkt-card">'
+            f'<div class="mkt-dot-{_m["status"]}"></div>'
+            f'<div class="mkt-info">'
+            f'<div class="mkt-nome">{_m["emoji"]} {_m["nome"]}</div>'
+            f'<div class="mkt-status-{_m["status"]}">{_m["label"]}</div>'
+            f'<div class="mkt-horario">{_m["horario"]}</div>'
+            f'</div></div>'
+        )
+    _mkt_html += '</div>'
+    st.markdown(_mkt_html, unsafe_allow_html=True)
+    st.markdown('<div style="font-size:.62rem;color:#475569;margin-bottom:.6rem">Horários em BRT (Brasília). NYSE sem ajuste horário de verão EUA. Atualiza com a página.</div>', unsafe_allow_html=True)
 
     # ── GRADE DE COTAÇÕES estilo Profit (mapa de mercado) ────────────────────
     st.markdown('<div class="sec-title">📊 Cotações</div>', unsafe_allow_html=True)
