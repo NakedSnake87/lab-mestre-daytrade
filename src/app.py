@@ -58,80 +58,146 @@ def status_mercados():
 # CALENDÁRIO ECONÔMICO — eventos macro que afetam WIN/WDO
 # ══════════════════════════════════════════════════════════════════════════════
 # Eventos pontuais com data específica (atualizar anualmente conforme calendário oficial)
-EVENTOS_FIXOS = [
-    # COPOM 2026 (datas oficiais BCB) — decisão de juros, sempre quarta
-    {"data":"2026-01-28","hora":"18:30","pais":"🇧🇷","evento":"Decisão COPOM (Selic)","impacto":"alto","win":"Selic alta pressiona Bolsa","wdo":"Selic alta tende a valorizar Real"},
-    {"data":"2026-03-18","hora":"18:30","pais":"🇧🇷","evento":"Decisão COPOM (Selic)","impacto":"alto","win":"Selic alta pressiona Bolsa","wdo":"Selic alta tende a valorizar Real"},
-    {"data":"2026-05-06","hora":"18:30","pais":"🇧🇷","evento":"Decisão COPOM (Selic)","impacto":"alto","win":"Selic alta pressiona Bolsa","wdo":"Selic alta tende a valorizar Real"},
-    {"data":"2026-06-17","hora":"18:30","pais":"🇧🇷","evento":"Decisão COPOM (Selic)","impacto":"alto","win":"Selic alta pressiona Bolsa","wdo":"Selic alta tende a valorizar Real"},
-    {"data":"2026-07-29","hora":"18:30","pais":"🇧🇷","evento":"Decisão COPOM (Selic)","impacto":"alto","win":"Selic alta pressiona Bolsa","wdo":"Selic alta tende a valorizar Real"},
-    {"data":"2026-09-16","hora":"18:30","pais":"🇧🇷","evento":"Decisão COPOM (Selic)","impacto":"alto","win":"Selic alta pressiona Bolsa","wdo":"Selic alta tende a valorizar Real"},
-    {"data":"2026-11-04","hora":"18:30","pais":"🇧🇷","evento":"Decisão COPOM (Selic)","impacto":"alto","win":"Selic alta pressiona Bolsa","wdo":"Selic alta tende a valorizar Real"},
-    {"data":"2026-12-09","hora":"18:30","pais":"🇧🇷","evento":"Decisão COPOM (Selic)","impacto":"alto","win":"Selic alta pressiona Bolsa","wdo":"Selic alta tende a valorizar Real"},
-    # FOMC 2026 (Fed) — decisão de juros EUA
-    {"data":"2026-01-28","hora":"16:00","pais":"🇺🇸","evento":"Decisão FOMC (Fed)","impacto":"alto","win":"Juros EUA altos pressionam emergentes","wdo":"Fed hawkish fortalece Dólar"},
-    {"data":"2026-03-18","hora":"15:00","pais":"🇺🇸","evento":"Decisão FOMC (Fed)","impacto":"alto","win":"Juros EUA altos pressionam emergentes","wdo":"Fed hawkish fortalece Dólar"},
-    {"data":"2026-04-29","hora":"15:00","pais":"🇺🇸","evento":"Decisão FOMC (Fed)","impacto":"alto","win":"Juros EUA altos pressionam emergentes","wdo":"Fed hawkish fortalece Dólar"},
-    {"data":"2026-06-17","hora":"15:00","pais":"🇺🇸","evento":"Decisão FOMC (Fed)","impacto":"alto","win":"Juros EUA altos pressionam emergentes","wdo":"Fed hawkish fortalece Dólar"},
-    {"data":"2026-07-29","hora":"15:00","pais":"🇺🇸","evento":"Decisão FOMC (Fed)","impacto":"alto","win":"Juros EUA altos pressionam emergentes","wdo":"Fed hawkish fortalece Dólar"},
-    {"data":"2026-09-16","hora":"15:00","pais":"🇺🇸","evento":"Decisão FOMC (Fed)","impacto":"alto","win":"Juros EUA altos pressionam emergentes","wdo":"Fed hawkish fortalece Dólar"},
-    {"data":"2026-10-28","hora":"15:00","pais":"🇺🇸","evento":"Decisão FOMC (Fed)","impacto":"alto","win":"Juros EUA altos pressionam emergentes","wdo":"Fed hawkish fortalece Dólar"},
-    {"data":"2026-12-09","hora":"15:00","pais":"🇺🇸","evento":"Decisão FOMC (Fed)","impacto":"alto","win":"Juros EUA altos pressionam emergentes","wdo":"Fed hawkish fortalece Dólar"},
+# ══════════════════════════════════════════════════════════════════════════════
+# CALENDÁRIO ECONÔMICO — fonte primária: ForexFactory JSON (runtime)
+# Fallback: datas oficiais hardcoded (COPOM/BCB + FOMC/Fed)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── FALLBACK HARDCODED — só usado se a API falhar ─────────────────────────────
+# Fonte: bcb.gov.br (COPOM) e federalreserve.gov (FOMC)
+_COPOM_FALLBACK = [
+    ("2026-06-17","18:30"), ("2026-07-29","18:30"), ("2026-09-16","18:30"),
+    ("2026-11-04","18:30"), ("2026-12-09","18:30"),
+]
+_FOMC_FALLBACK = [
+    ("2026-06-17","15:00"), ("2026-07-29","15:00"), ("2026-09-16","15:00"),
+    ("2026-10-28","15:00"), ("2026-12-09","15:00"),
 ]
 
-def _primeira_sexta(ano, mes):
-    """Retorna a primeira sexta-feira do mês (Payroll dos EUA)."""
-    d = date(ano, mes, 1)
-    while d.weekday() != 4:  # 4 = sexta
-        d += timedelta(days=1)
-    return d
+# Mapeamento ForexFactory → labels internos
+_FF_MAP = {
+    "Non-Farm Employment Change": ("Payroll (NFP EUA)",      "alto",  "🇺🇸", "Volatilidade forte, define humor do dia", "Forte impacto no dólar"),
+    "CPI m/m":                    ("CPI — Inflação EUA",      "alto",  "🇺🇸", "Afeta via expectativa de juros do Fed",  "Dólar reage forte"),
+    "Core CPI m/m":               ("Core CPI EUA",            "alto",  "🇺🇸", "Fed monitora de perto",                 "Dólar reage forte"),
+    "IPCA":                       ("IPCA — Inflação Brasil",  "alto",  "🇧🇷", "Define expectativa da Selic",            "Impacta o real"),
+    "IPCA-15":                    ("IPCA-15 (prévia)",        "medio", "🇧🇷", "Prévia da inflação",                    "Impacto moderado no real"),
+    "Interest Rate Decision":     ("Decisão de Juros",        "alto",  "🇺🇸", "Move bolsas globais",                   "Dólar reage forte"),
+    "Unemployment Rate":          ("Taxa Desemprego EUA",     "alto",  "🇺🇸", "Dado forte = Fed mais hawkish",         "Impacta dólar"),
+    "GDP q/q":                    ("PIB EUA (trimestral)",    "alto",  "🇺🇸", "Sinaliza saúde da economia",            "Dólar reage"),
+    "Retail Sales m/m":           ("Vendas Varejo EUA",       "medio", "🇺🇸", "Consumo forte = inflação mais alta",    "Leve impacto no dólar"),
+    "PPI m/m":                    ("PPI — Inflação Produtor", "medio", "🇺🇸", "Antecede pressão no CPI",              "Dólar pode reagir"),
+}
+_FF_PAISES = {"USD": "🇺🇸", "BRL": "🇧🇷", "EUR": "🇪🇺"}
+_FF_IMPACTO = {"High": "alto", "Medium": "medio", "Low": "baixo"}
 
-def gerar_eventos_recorrentes(ano, mes):
-    """Gera eventos recorrentes do mês: Payroll, CPI, IPCA."""
-    eventos = []
-    # Payroll — 1ª sexta do mês, 9h30 (Brasília)
-    payroll = _primeira_sexta(ano, mes)
-    eventos.append({
-        "data": payroll.strftime("%Y-%m-%d"), "hora":"09:30", "pais":"🇺🇸",
-        "evento":"Payroll (Folha de Pagamento EUA)", "impacto":"alto",
-        "win":"Dado forte = Fed mais duro, pressiona Bolsa",
-        "wdo":"Payroll forte fortalece Dólar",
-    })
-    # CPI EUA — geralmente meados do mês (~dia 12), 9h30
-    eventos.append({
-        "data": date(ano, mes, 12).strftime("%Y-%m-%d"), "hora":"09:30", "pais":"🇺🇸",
-        "evento":"CPI (Inflação EUA)", "impacto":"alto",
-        "win":"Inflação alta = juros altos = pressão na Bolsa",
-        "wdo":"CPI alto fortalece Dólar",
-    })
-    # IPCA Brasil — geralmente ~dia 10, 9h
-    eventos.append({
-        "data": date(ano, mes, 10).strftime("%Y-%m-%d"), "hora":"09:00", "pais":"🇧🇷",
-        "evento":"IPCA (Inflação Brasil)", "impacto":"medio",
-        "win":"IPCA alto = expectativa de Selic maior",
-        "wdo":"IPCA afeta trajetória da Selic e o Real",
-    })
-    return eventos
-
-def calendario_proximos(dias=14):
-    """Retorna eventos dos próximos N dias, ordenados por data."""
+@st.cache_data(ttl=3600)
+def buscar_calendario_ff(dias=21):
+    """
+    Busca calendário econômico do ForexFactory JSON público.
+    Filtra USD e BRL, impacto Medium/High.
+    Retorna lista de eventos ordenados por data/hora (BRT).
+    """
     hoje = datetime.now(BR_TZ).date()
-    limite = hoje + timedelta(days=dias)
-    todos = list(EVENTOS_FIXOS)
-    # adiciona recorrentes do mês atual e do próximo
-    for delta_mes in (0, 1):
-        ref = (hoje.replace(day=1) + timedelta(days=32*delta_mes)).replace(day=1)
-        todos += gerar_eventos_recorrentes(ref.year, ref.month)
-    # filtra janela e ordena
-    out = []
-    for e in todos:
+    fim  = hoje + timedelta(days=dias)
+    eventos = []
+    hdrs = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+
+    # ForexFactory disponibiliza semana atual e próxima semana
+    urls = [
+        "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
+        "https://nfs.faireconomy.media/ff_calendar_nextweek.json",
+    ]
+
+    raw = []
+    for url in urls:
         try:
-            d = datetime.strptime(e["data"], "%Y-%m-%d").date()
-            if hoje <= d <= limite:
-                out.append(e)
+            r = requests.get(url, headers=hdrs, timeout=6)
+            if r.status_code == 200:
+                raw.extend(r.json())
         except:
-            continue
-    out.sort(key=lambda x: (x["data"], x["hora"]))
+            pass
+
+    if raw:
+        for ev in raw:
+            try:
+                moeda  = ev.get("currency","")
+                impact = ev.get("impact","")
+                titulo = ev.get("title","")
+                dt_str = ev.get("date","")  # "2026-06-10T08:30:00-04:00"
+
+                # Só USD e BRL, impacto High ou Medium
+                if moeda not in ("USD","BRL"): continue
+                if impact not in ("High","Medium"): continue
+
+                # Converte para BRT
+                from dateutil import parser as dtparser
+                dt_utc = dtparser.parse(dt_str)
+                dt_brt = dt_utc.astimezone(BR_TZ)
+                d = dt_brt.date()
+
+                if not (hoje <= d <= fim): continue
+
+                hora_brt = dt_brt.strftime("%H:%M")
+                pais = _FF_PAISES.get(moeda, "🌐")
+                impacto = _FF_IMPACTO.get(impact, "medio")
+
+                # Tenta mapear título conhecido, senão usa genérico
+                mapeado = None
+                for chave, vals in _FF_MAP.items():
+                    if chave.lower() in titulo.lower():
+                        mapeado = vals
+                        break
+
+                if mapeado:
+                    nome, impacto, pais, win_txt, wdo_txt = mapeado
+                    # COPOM/FOMC: corrige país pelo currency
+                    if "Interest Rate" in titulo:
+                        if moeda == "BRL":
+                            nome = "Decisão COPOM (Selic)"
+                            win_txt = "Define direção da bolsa"
+                            wdo_txt = "Forte impacto no real"
+                            hora_brt = "18:30"
+                            pais = "🇧🇷"
+                else:
+                    nome = titulo
+                    win_txt = "Monitorar volatilidade"
+                    wdo_txt = "Pode impactar câmbio"
+
+                eventos.append({
+                    "data": d, "hora": hora_brt, "pais": pais,
+                    "nome": nome, "impacto": impacto,
+                    "win": win_txt, "wdo": wdo_txt,
+                    "fonte": "ForexFactory",
+                })
+            except:
+                continue
+
+    # ── FALLBACK: se API não retornou nada, usa hardcoded ────────────────────
+    if not eventos:
+        for ds, hora in _COPOM_FALLBACK:
+            d = datetime.strptime(ds, "%Y-%m-%d").date()
+            if hoje <= d <= fim:
+                eventos.append({"data": d, "hora": hora, "pais": "🇧🇷",
+                    "nome": "Decisão COPOM (Selic)", "impacto": "alto",
+                    "win": "Define direção da bolsa", "wdo": "Forte impacto no real",
+                    "fonte": "fallback"})
+        for ds, hora in _FOMC_FALLBACK:
+            d = datetime.strptime(ds, "%Y-%m-%d").date()
+            if hoje <= d <= fim:
+                eventos.append({"data": d, "hora": hora, "pais": "🇺🇸",
+                    "nome": "Decisão FOMC (Fed)", "impacto": "alto",
+                    "win": "Move bolsas globais", "wdo": "Dólar reage forte",
+                    "fonte": "fallback"})
+
+    # Deduplica por (data, nome) e ordena
+    vistos = set()
+    out = []
+    for e in sorted(eventos, key=lambda x: (x["data"], x["hora"])):
+        chave = (e["data"], e["nome"][:30])
+        if chave not in vistos:
+            vistos.add(chave)
+            out.append(e)
+
     return out
 
 
@@ -947,63 +1013,6 @@ def buscar_noticias_rss(query=""):
 # CALENDÁRIO ECONÔMICO — eventos macro que afetam WIN/WDO
 # ══════════════════════════════════════════════════════════════════════════════
 # Datas oficiais de 2026 (COPOM e FOMC são divulgadas com antecedência)
-COPOM_2026 = ["2026-01-28","2026-03-18","2026-05-06","2026-06-17",
-              "2026-07-29","2026-09-16","2026-11-04","2026-12-09"]
-FOMC_2026  = ["2026-01-28","2026-03-18","2026-04-29","2026-06-17",
-              "2026-07-29","2026-09-16","2026-11-04","2026-12-16"]
-
-def _primeira_sexta(ano, mes):
-    d = date(ano, mes, 1)
-    while d.weekday() != 4:  # 4 = sexta
-        d += timedelta(days=1)
-    return d
-
-def gerar_calendario(dias_a_frente=14):
-    """Gera eventos macro dos próximos N dias com impacto classificado."""
-    hoje = datetime.now(BR_TZ).date()
-    fim  = hoje + timedelta(days=dias_a_frente)
-    eventos = []
-
-    def add(d, hora, pais, nome, impacto, win, wdo):
-        if hoje <= d <= fim:
-            eventos.append({"data": d, "hora": hora, "pais": pais, "nome": nome,
-                            "impacto": impacto, "win": win, "wdo": wdo})
-
-    # Varre cada mês no intervalo
-    meses = set()
-    d = hoje
-    while d <= fim:
-        meses.add((d.year, d.month))
-        d += timedelta(days=1)
-
-    for ano, mes in meses:
-        # Payroll EUA — 1ª sexta, 9h30 (Brasília)
-        pf = _primeira_sexta(ano, mes)
-        add(pf, "09:30", "🇺🇸", "Payroll (Nonfarm Payrolls)", "alto",
-            "Volatilidade forte, define humor do dia", "Forte impacto no dólar")
-        # CPI EUA — ~dia 12
-        add(date(ano, mes, 12), "09:30", "🇺🇸", "CPI — Inflação EUA", "alto",
-            "Afeta via expectativa de juros do Fed", "Dólar reage forte")
-        # IPCA Brasil — ~dia 10
-        add(date(ano, mes, 10), "09:00", "🇧🇷", "IPCA — Inflação Brasil", "alto",
-            "Define expectativa da Selic", "Impacta o real")
-        # IPCA-15 — ~dia 25
-        add(date(ano, mes, 25), "09:00", "🇧🇷", "IPCA-15 (prévia)", "medio",
-            "Prévia da inflação", "Impacto moderado no real")
-
-    # COPOM e FOMC (decisão de juros — sempre alto impacto)
-    for ds in COPOM_2026:
-        d = datetime.strptime(ds, "%Y-%m-%d").date()
-        add(d, "18:30", "🇧🇷", "Decisão COPOM (Selic)", "alto",
-            "Define direção da bolsa", "Forte impacto no real")
-    for ds in FOMC_2026:
-        d = datetime.strptime(ds, "%Y-%m-%d").date()
-        add(d, "15:00", "🇺🇸", "Decisão FOMC (Fed)", "alto",
-            "Move bolsas globais", "Dólar reage forte")
-
-    eventos.sort(key=lambda e: (e["data"], e["hora"]))
-    return eventos
-
 # ── % RISCO SUGERIDO ──────────────────────────────────────────────────────────
 def risco_sugerido(capital):
     if capital <= 2000:   return 5.0
@@ -1488,70 +1497,41 @@ with tab1:
     else:
         st.markdown(f'<div style="background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:1rem 1.3rem;color:#475569;font-size:.83rem;margin-bottom:1rem">⏳ Aguardando dados de <b>{ativo_detalhe}</b>… Clique em Atualizar.</div>', unsafe_allow_html=True)
 
-    # ── NOTÍCIAS ──────────────────────────────────────────────────────────────
     # ── CALENDÁRIO ECONÔMICO ──────────────────────────────────────────────────
-    st.markdown('<div class="sec-divider"></div><div class="sec-title">📅 Calendário Econômico — Próximos 14 dias</div>', unsafe_allow_html=True)
-    eventos = gerar_calendario(14)
+    st.markdown('<div class="sec-divider"></div><div class="sec-title">📅 Calendário Econômico</div>', unsafe_allow_html=True)
+    with st.spinner("Carregando calendário…"):
+        eventos = buscar_calendario_ff(21)
     if not eventos:
-        st.markdown('<div style="color:#475569;font-size:.83rem;padding:.5rem 0">Sem eventos macro relevantes nos próximos dias.</div>', unsafe_allow_html=True)
+        st.markdown('<div style="color:#475569;font-size:.83rem;padding:.5rem 0">Nenhum evento nos próximos dias. Verifique sua conexão.</div>', unsafe_allow_html=True)
     else:
-        st.markdown('<div style="display:flex;gap:1rem;font-size:.7rem;color:#64748b;margin-bottom:.6rem">🔴 Alto impacto &nbsp; 🟡 Médio &nbsp; 🟢 Baixo</div>', unsafe_allow_html=True)
+        fonte_label = "ForexFactory" if any(e.get("fonte")=="ForexFactory" for e in eventos) else "fallback (BCB/Fed)"
+        st.markdown(f'<div style="display:flex;gap:1rem;font-size:.7rem;color:#64748b;margin-bottom:.6rem">🔴 Alto &nbsp; 🟡 Médio &nbsp; 🟢 Baixo &nbsp;·&nbsp; 📡 Fonte: {fonte_label}</div>', unsafe_allow_html=True)
         hoje_d = datetime.now(BR_TZ).date()
         cal_html = ""
         for e in eventos:
-            cor_imp = {"alto":"#ef4444","medio":"#f59e0b","baixo":"#22c55e"}[e["impacto"]]
-            bola = {"alto":"🔴","medio":"🟡","baixo":"🟢"}[e["impacto"]]
-            dia_lbl = "HOJE" if e["data"] == hoje_d else ("AMANHÃ" if e["data"] == hoje_d + timedelta(days=1) else e["data"].strftime("%d/%m"))
-            destaque = "background:rgba(239,68,68,.07);" if (e["data"] == hoje_d and e["impacto"]=="alto") else ""
+            cor_imp = {"alto":"#ef4444","medio":"#f59e0b","baixo":"#22c55e"}.get(e["impacto"],"#f59e0b")
+            bola    = {"alto":"🔴","medio":"🟡","baixo":"🟢"}.get(e["impacto"],"🟡")
+            d_ev    = e["data"]
+            if d_ev == hoje_d:          dia_lbl = "HOJE"
+            elif d_ev == hoje_d + timedelta(days=1): dia_lbl = "AMANHÃ"
+            else:                       dia_lbl = d_ev.strftime("%d/%m")
+            destaque = "background:rgba(239,68,68,.07);" if (d_ev==hoje_d and e["impacto"]=="alto") else ""
+            dia_sem  = ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"][d_ev.weekday()]
             cal_html += (
                 f'<div style="background:#0f172a;{destaque}border:1px solid #1e293b;border-left:3px solid {cor_imp};border-radius:8px;padding:.6rem .9rem;margin-bottom:.4rem">'
                 f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem">'
-                f'<div style="font-size:.84rem;color:#f1f5f9;font-weight:600">{bola} {e["pais"]} {e["nome"]}</div>'
-                f'<div style="font-size:.75rem;color:#94a3b8;font-family:\'JetBrains Mono\',monospace">{dia_lbl} · {e["hora"]}</div>'
+                f'<div style="font-size:.84rem;color:#f1f5f9;font-weight:600">{bola} {e["pais"]} {html_mod.escape(e["nome"])}</div>'
+                f'<div style="font-size:.75rem;color:#94a3b8;font-family:\'JetBrains Mono\',monospace">{dia_sem} {dia_lbl} · {e["hora"]}</div>'
                 f'</div>'
                 f'<div style="display:flex;gap:1.2rem;margin-top:.35rem;font-size:.7rem;color:#64748b;flex-wrap:wrap">'
-                f'<span>📊 WIN: {e["win"]}</span><span>💵 WDO: {e["wdo"]}</span>'
+                f'<span>📊 WIN: {html_mod.escape(e["win"])}</span><span>💵 WDO: {html_mod.escape(e["wdo"])}</span>'
                 f'</div></div>'
             )
         st.markdown(cal_html, unsafe_allow_html=True)
+        st.markdown('<div style="font-size:.62rem;color:#475569;margin-top:.2rem">📡 Dados: ForexFactory (USD/BRL, impacto Alto/Médio). Fallback: BCB e Fed oficial. Cache 1h.</div>', unsafe_allow_html=True)
 
-    # ── CALENDÁRIO ECONÔMICO ──────────────────────────────────────────────────
-    st.markdown('<div class="sec-divider"></div><div class="sec-title">📅 Calendário Econômico — Próximos Eventos</div>', unsafe_allow_html=True)
-    eventos = calendario_proximos(14)
-    if not eventos:
-        st.markdown('<div style="color:#475569;font-size:.83rem;padding:.5rem 0">Sem eventos relevantes nos próximos 14 dias.</div>', unsafe_allow_html=True)
-    else:
-        hoje_str = datetime.now(BR_TZ).strftime("%Y-%m-%d")
-        cor_imp = {"alto":"#ef4444","medio":"#f59e0b","baixo":"#22c55e"}
-        lbl_imp = {"alto":"🔴 ALTO","medio":"🟡 MÉDIO","baixo":"🟢 BAIXO"}
-        for e in eventos:
-            imp = e.get("impacto","medio")
-            c = cor_imp.get(imp, "#f59e0b")
-            d_obj = datetime.strptime(e["data"], "%Y-%m-%d")
-            data_fmt = d_obj.strftime("%d/%m")
-            dia_semana = ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"][d_obj.weekday()]
-            eh_hoje = e["data"] == hoje_str
-            badge_hoje = '<span style="background:#0066ff;color:#fff;border-radius:4px;padding:.1rem .4rem;font-size:.6rem;font-weight:700;margin-left:.4rem">HOJE</span>' if eh_hoje else ''
-            ev = html_mod.escape(e["evento"])
-            win = html_mod.escape(e.get("win",""))
-            wdo = html_mod.escape(e.get("wdo",""))
-            card_cal = (
-                f'<div style="background:#0f172a;border:1px solid #1e293b;border-left:3px solid {c};border-radius:8px;padding:.6rem .9rem;margin-bottom:.4rem">'
-                f'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.4rem">'
-                f'<div style="font-size:.85rem;color:#f1f5f9;font-weight:600">{e["pais"]} {ev}{badge_hoje}</div>'
-                f'<div style="display:flex;gap:.6rem;align-items:center">'
-                f'<span style="font-size:.7rem;color:#94a3b8;font-family:\'JetBrains Mono\',monospace">{dia_semana} {data_fmt} · {e["hora"]}</span>'
-                f'<span style="font-size:.6rem;font-weight:700;color:{c}">{lbl_imp.get(imp,"")}</span>'
-                f'</div></div>'
-                f'<div style="display:flex;gap:1.2rem;margin-top:.4rem;font-size:.7rem;color:#64748b;flex-wrap:wrap">'
-                f'<span>📊 <b style="color:#94a3b8">WIN:</b> {win}</span>'
-                f'<span>💱 <b style="color:#94a3b8">WDO:</b> {wdo}</span>'
-                f'</div></div>'
-            )
-            st.markdown(card_cal, unsafe_allow_html=True)
-        st.markdown('<div style="font-size:.66rem;color:#475569;margin-top:.3rem">Datas COPOM/FOMC oficiais. Payroll, CPI e IPCA são estimativas recorrentes — confirme o horário exato no dia.</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="sec-divider"></div><div class="sec-title">📺 Central de Notícias — Mercado ao Vivo</div>', unsafe_allow_html=True)
+    
+        st.markdown('<div class="sec-divider"></div><div class="sec-title">📺 Central de Notícias — Mercado ao Vivo</div>', unsafe_allow_html=True)
     col_busca, col_btn2 = st.columns([5,1])
     with col_busca:
         query_n = st.text_input("", placeholder="Filtrar: Ibovespa, dólar, WIN, juros, selic…", label_visibility="collapsed")
