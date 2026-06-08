@@ -603,18 +603,43 @@ def _fetch_forex():
             timeout=4, headers=hdrs)
         if r.status_code == 200:
             data = r.json()
-            def aw(code, preco_key="bid"):
+            def aw(code):
                 d = data.get(code, {})
-                preco = float(d.get(preco_key, 0) or 0)
-                var   = float(d.get("pctChange", 0) or 0)
-                return {"preco": round(preco, 5), "var": round(var, 2)} if preco else None
+                preco = float(d.get("bid", 0) or 0)
+                if not preco:
+                    return None
+                # pctChange vem como string, ex: "0.38" ou "0" ou ""
+                pct = d.get("pctChange", "") or ""
+                try:
+                    var = round(float(pct), 2)
+                except:
+                    var = 0.0
+                # Se vier zero, tenta calcular pelo open/bid
+                if var == 0.0:
+                    try:
+                        open_p = float(d.get("open", 0) or 0)
+                        if open_p and open_p != preco:
+                            var = round((preco - open_p) / open_p * 100, 2)
+                    except:
+                        pass
+                high = float(d.get("high", 0) or 0)
+                low  = float(d.get("low",  0) or 0)
+                open_p = float(d.get("open", 0) or 0)
+                return {
+                    "preco": round(preco, 5),
+                    "var":   var,
+                    "var_dia": var,
+                    "high":  round(high, 5) if high else 0,
+                    "low":   round(low,  5) if low  else 0,
+                    "open":  round(open_p, 5) if open_p else 0,
+                }
 
-            if aw("USDBRL"):   resultado["Dólar/BRL"] = aw("USDBRL")
-            if aw("EURUSD"):   resultado["EUR/USD"]   = aw("EURUSD")
-            if aw("GBPUSD"):   resultado["GBP/USD"]   = aw("GBPUSD")
-            if aw("USDJPY"):   resultado["USD/JPY"]   = aw("USDJPY")
-            if aw("AUDUSD"):   resultado["AUD/USD"]   = aw("AUDUSD")
-            if aw("USDCNY"):   resultado["USD/CNY"]   = aw("USDCNY")
+            if aw("USDBRL"):  resultado["Dólar/BRL"] = aw("USDBRL")
+            if aw("EURUSD"):  resultado["EUR/USD"]   = aw("EURUSD")
+            if aw("GBPUSD"):  resultado["GBP/USD"]   = aw("GBPUSD")
+            if aw("USDJPY"):  resultado["USD/JPY"]   = aw("USDJPY")
+            if aw("AUDUSD"):  resultado["AUD/USD"]   = aw("AUDUSD")
+            if aw("USDCNY"):  resultado["USD/CNY"]   = aw("USDCNY")
     except:
         pass
 
