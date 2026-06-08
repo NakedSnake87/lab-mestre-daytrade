@@ -707,12 +707,6 @@ def _fetch_cripto():
 # ── yfinance — fonte robusta com variações por período ────────────────────────
 YF_MAP = {
     "IBOVESPA":      "^BVSP",
-    "Dólar/BRL":     "BRL=X",
-    "EUR/USD":       "EURUSD=X",
-    "GBP/USD":       "GBPUSD=X",
-    "USD/JPY":       "JPY=X",
-    "AUD/USD":       "AUDUSD=X",
-    "USD/CNY":       "CNY=X",
     "S&P 500":       "^GSPC",
     "Nasdaq":        "^IXIC",
     "DAX":           "^GDAXI",
@@ -809,55 +803,15 @@ def buscar_cotacoes():
     todas = [fut_yf, fut_forex, fut_cripto]
     done, _ = wait(todas, timeout=14)
 
-    # Ordem: yfinance primeiro (tem variações de período), depois AwesomeAPI
-    # sobrescreve preço/var do dólar com dados mais frescos
-    resultados_ordenados = []
-    forex_res = None
     for fut in done:
         try:
             res = fut.result(timeout=0.1)
-            if isinstance(res, dict) and res:
-                if fut == fut_forex:
-                    forex_res = res  # aplica por último
-                else:
-                    resultados_ordenados.append(res)
+            if isinstance(res, dict):
+                resultado.update({k: v for k, v in res.items() if v and v.get("preco")})
         except:
             pass
 
-    for res in resultados_ordenados:
-        resultado.update({k: v for k, v in res.items() if v and v.get("preco")})
-
-    # AwesomeAPI por último — sobrescreve preço/var do forex com dado mais atualizado
-    # mas preserva variações de período (var_semana, var_mes, var_ano) do yfinance
-    if forex_res:
-        for par, aw_data in forex_res.items():
-            if aw_data and aw_data.get("preco"):
-                if par in resultado:
-                    # herda períodos do yfinance, substitui preço e var pela AwesomeAPI
-                    merged = dict(resultado[par])
-                    merged["preco"] = aw_data["preco"]
-                    merged["var"]   = aw_data["var"]
-                    merged["var_dia"] = aw_data["var"]
-                    resultado[par] = merged
-                else:
-                    resultado[par] = aw_data
-
     ex.shutdown(wait=False)
-
-    # AwesomeAPI já retorna forex direto — remove chaves _fb residuais do yfinance
-    for k in list(resultado.keys()):
-        if k.startswith("_") and k.endswith("_fb"):
-            resultado.pop(k, None)
-
-    # Forex: AwesomeAPI tem prioridade sobre yfinance (mais atualizado)
-    # yfinance traz variações de período (var_semana, var_mes, var_ano) — herda se disponível
-    for par in ("Dólar/BRL","EUR/USD","GBP/USD","USD/JPY","AUD/USD","USD/CNY"):
-        if par in resultado:
-            # Se yfinance também trouxe, herda as variações de período mas mantém preço da AwesomeAPI
-            yf_key = par
-            aw_data = resultado[par]
-            # AwesomeAPI já tem preco e var atualizados — só complementa com períodos do yfinance se existirem
-            # (o yfinance pode ter sobrescrito com dado mais velho — garantimos que AwesomeAPI vence no preço)
 
     # WINFUT — espelha IBOV (índice à vista; futuro anda colado)
     if "IBOVESPA" in resultado:
