@@ -590,13 +590,31 @@ def _fetch_stooq(nome_sym):
 
 def _fetch_forex():
     """
-    AwesomeAPI (fonte primária) — dólar comercial BR, atualiza ~1min, sem chave.
-    Frankfurter como fallback se AwesomeAPI falhar.
+    Fontes de câmbio em ordem de prioridade:
+    1. BCB PTAX (oficial, fechamento do dia — Banco Central)
+    2. AwesomeAPI (intraday, ~1min delay)
+    3. Frankfurter (fallback)
     """
     hdrs = {"User-Agent": "Mozilla/5.0"}
     resultado = {}
 
-    # ── FONTE PRIMÁRIA: AwesomeAPI ────────────────────────────────────────────
+    # ── 1. BCB PTAX — cotação oficial do Banco Central ────────────────────────
+    try:
+        hoje = datetime.now(BR_TZ).strftime("%m-%d-%Y")
+        r = requests.get(
+            f"https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/CotacaoDolarDia(dataCotacao=@dataCotacao)?@dataCotacao='{hoje}'&$format=json",
+            timeout=5, headers=hdrs)
+        if r.status_code == 200:
+            valores = r.json().get("value", [])
+            if valores:
+                v = valores[-1]
+                preco = float(v.get("cotacaoVenda", 0) or 0)
+                if preco:
+                    resultado["Dólar/BRL"] = {"preco": round(preco, 4), "var": 0, "fonte": "BCB"}
+    except:
+        pass
+
+    # ── 2. AwesomeAPI — todos os pares + variação intraday ───────────────────
     try:
         r = requests.get(
             "https://economia.awesomeapi.com.br/json/last/USD-BRL,EUR-USD,GBP-USD,USD-JPY,AUD-USD,USD-CNY",
@@ -606,35 +624,32 @@ def _fetch_forex():
             def aw(code):
                 d = data.get(code, {})
                 preco = float(d.get("bid", 0) or 0)
-                if not preco:
-                    return None
-                # pctChange vem como string, ex: "0.38" ou "0" ou ""
-                pct = d.get("pctChange", "") or ""
-                try:
-                    var = round(float(pct), 2)
-                except:
-                    var = 0.0
-                # Se vier zero, tenta calcular pelo open/bid
+                if not preco: return None
+                try:    var = round(float(d.get("pctChange", 0) or 0), 2)
+                except: var = 0.0
                 if var == 0.0:
                     try:
-                        open_p = float(d.get("open", 0) or 0)
-                        if open_p and open_p != preco:
-                            var = round((preco - open_p) / open_p * 100, 2)
-                    except:
-                        pass
-                high = float(d.get("high", 0) or 0)
-                low  = float(d.get("low",  0) or 0)
-                open_p = float(d.get("open", 0) or 0)
+                        op = float(d.get("open", 0) or 0)
+                        if op and op != preco:
+                            var = round((preco - op) / op * 100, 2)
+                    except: pass
                 return {
-                    "preco": round(preco, 5),
-                    "var":   var,
-                    "var_dia": var,
-                    "high":  round(high, 5) if high else 0,
-                    "low":   round(low,  5) if low  else 0,
-                    "open":  round(open_p, 5) if open_p else 0,
+                    "preco": round(preco, 5), "var": var, "var_dia": var,
+                    "high":  round(float(d.get("high", 0) or 0), 5),
+                    "low":   round(float(d.get("low",  0) or 0), 5),
+                    "open":  round(float(d.get("open", 0) or 0), 5),
                 }
-
-            if aw("USDBRL"):  resultado["Dólar/BRL"] = aw("USDBRL")
+            # Dólar/BRL: usa BCB se já tiver preço, só herda var da AwesomeAPI
+            aw_usd = aw("USDBRL")
+            if aw_usd:
+                if "Dólar/BRL" in resultado:
+                    resultado["Dólar/BRL"]["var"]     = aw_usd["var"]
+                    resultado["Dólar/BRL"]["var_dia"]  = aw_usd["var"]
+                    resultado["Dólar/BRL"]["high"]     = aw_usd.get("high", 0)
+                    resultado["Dólar/BRL"]["low"]      = aw_usd.get("low", 0)
+                    resultado["Dólar/BRL"]["open"]     = aw_usd.get("open", 0)
+                else:
+                    resultado["Dólar/BRL"] = aw_usd
             if aw("EURUSD"):  resultado["EUR/USD"]   = aw("EURUSD")
             if aw("GBPUSD"):  resultado["GBP/USD"]   = aw("GBPUSD")
             if aw("USDJPY"):  resultado["USD/JPY"]   = aw("USDJPY")
@@ -643,7 +658,7 @@ def _fetch_forex():
     except:
         pass
 
-    # ── FALLBACK: Frankfurter (sem variação %) ────────────────────────────────
+    # ── 3. Frankfurter — fallback se tudo falhar ─────────────────────────────
     if not resultado:
         try:
             r = requests.get(
@@ -707,6 +722,12 @@ def _fetch_cripto():
 # ── yfinance — fonte robusta com variações por período ────────────────────────
 YF_MAP = {
     "IBOVESPA":      "^BVSP",
+    "Dólar/BRL":     "BRL=X",
+    "EUR/USD":       "EURUSD=X",
+    "GBP/USD":       "GBPUSD=X",
+    "USD/JPY":       "JPY=X",
+    "AUD/USD":       "AUDUSD=X",
+    "USD/CNY":       "CNY=X",
     "S&P 500":       "^GSPC",
     "Nasdaq":        "^IXIC",
     "DAX":           "^GDAXI",
@@ -803,15 +824,55 @@ def buscar_cotacoes():
     todas = [fut_yf, fut_forex, fut_cripto]
     done, _ = wait(todas, timeout=14)
 
+    # Ordem: yfinance primeiro (tem variações de período), depois AwesomeAPI
+    # sobrescreve preço/var do dólar com dados mais frescos
+    resultados_ordenados = []
+    forex_res = None
     for fut in done:
         try:
             res = fut.result(timeout=0.1)
-            if isinstance(res, dict):
-                resultado.update({k: v for k, v in res.items() if v and v.get("preco")})
+            if isinstance(res, dict) and res:
+                if fut == fut_forex:
+                    forex_res = res  # aplica por último
+                else:
+                    resultados_ordenados.append(res)
         except:
             pass
 
+    for res in resultados_ordenados:
+        resultado.update({k: v for k, v in res.items() if v and v.get("preco")})
+
+    # AwesomeAPI por último — sobrescreve preço/var do forex com dado mais atualizado
+    # mas preserva variações de período (var_semana, var_mes, var_ano) do yfinance
+    if forex_res:
+        for par, aw_data in forex_res.items():
+            if aw_data and aw_data.get("preco"):
+                if par in resultado:
+                    # herda períodos do yfinance, substitui preço e var pela AwesomeAPI
+                    merged = dict(resultado[par])
+                    merged["preco"] = aw_data["preco"]
+                    merged["var"]   = aw_data["var"]
+                    merged["var_dia"] = aw_data["var"]
+                    resultado[par] = merged
+                else:
+                    resultado[par] = aw_data
+
     ex.shutdown(wait=False)
+
+    # AwesomeAPI já retorna forex direto — remove chaves _fb residuais do yfinance
+    for k in list(resultado.keys()):
+        if k.startswith("_") and k.endswith("_fb"):
+            resultado.pop(k, None)
+
+    # Forex: AwesomeAPI tem prioridade sobre yfinance (mais atualizado)
+    # yfinance traz variações de período (var_semana, var_mes, var_ano) — herda se disponível
+    for par in ("Dólar/BRL","EUR/USD","GBP/USD","USD/JPY","AUD/USD","USD/CNY"):
+        if par in resultado:
+            # Se yfinance também trouxe, herda as variações de período mas mantém preço da AwesomeAPI
+            yf_key = par
+            aw_data = resultado[par]
+            # AwesomeAPI já tem preco e var atualizados — só complementa com períodos do yfinance se existirem
+            # (o yfinance pode ter sobrescrito com dado mais velho — garantimos que AwesomeAPI vence no preço)
 
     # WINFUT — espelha IBOV (índice à vista; futuro anda colado)
     if "IBOVESPA" in resultado:
