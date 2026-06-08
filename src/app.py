@@ -4,7 +4,6 @@ import base64
 import xml.etree.ElementTree as ET
 import re
 import html as html_mod
-import sqlite3
 import os
 from datetime import datetime, timedelta, date
 import pytz
@@ -13,7 +12,6 @@ import pytz
 GROQ_KEY = st.secrets["GROQ_KEY"]
 NEWS_KEY  = st.secrets["NEWS_KEY"]
 BR_TZ     = pytz.timezone("America/Sao_Paulo")
-DB_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "diario_trades.db")
 
 def agora_br():
     return datetime.now(BR_TZ).strftime("%d/%m/%Y %H:%M")
@@ -205,85 +203,81 @@ def buscar_calendario_ff(dias=21):
 # ══════════════════════════════════════════════════════════════════════════════
 # CAMADA DE DADOS — Diário de Operações (SQLite)
 # ══════════════════════════════════════════════════════════════════════════════
-def db_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+# ══════════════════════════════════════════════════════════════════════════════
+# CAMADA DE DADOS — Supabase (persistente entre deploys)
+# ══════════════════════════════════════════════════════════════════════════════
+@st.cache_resource
+def get_supabase():
+    from supabase import create_client
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
 
 def db_init():
-    conn = db_conn()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS trades (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            data        TEXT NOT NULL,
-            ativo       TEXT NOT NULL,
-            direcao     TEXT NOT NULL,
-            contratos   INTEGER DEFAULT 1,
-            pontos      REAL DEFAULT 0,
-            resultado   REAL DEFAULT 0,
-            seguiu_setup INTEGER DEFAULT 1,
-            esticou_stop INTEGER DEFAULT 0,
-            hora        TEXT DEFAULT '',
-            obs         TEXT DEFAULT '',
-            criado_em   TEXT NOT NULL
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS acessos (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            data      TEXT NOT NULL,
-            momento   TEXT NOT NULL
-        )
-    """)
-    conn.commit()
-    conn.close()
+    pass  # tabelas já criadas no Supabase
 
 def db_registrar_acesso():
-    conn = db_conn()
-    hoje = datetime.now(BR_TZ)
-    conn.execute("INSERT INTO acessos (data, momento) VALUES (?,?)",
-                 (hoje.strftime("%Y-%m-%d"), hoje.isoformat()))
-    conn.commit()
-    conn.close()
+    try:
+        sb = get_supabase()
+        hoje = datetime.now(BR_TZ)
+        sb.table("acessos").insert({
+            "data": hoje.strftime("%Y-%m-%d"),
+            "momento": hoje.isoformat()
+        }).execute()
+    except: pass
 
 def db_stats_acessos():
-    conn = db_conn()
-    total = conn.execute("SELECT COUNT(*) FROM acessos").fetchone()[0]
-    hoje = datetime.now(BR_TZ).strftime("%Y-%m-%d")
-    hoje_n = conn.execute("SELECT COUNT(*) FROM acessos WHERE data = ?", (hoje,)).fetchone()[0]
-    conn.close()
-    return {"total": total, "hoje": hoje_n}
+    try:
+        sb = get_supabase()
+        total = sb.table("acessos").select("id", count="exact").execute().count or 0
+        hoje = datetime.now(BR_TZ).strftime("%Y-%m-%d")
+        hoje_n = sb.table("acessos").select("id", count="exact").eq("data", hoje).execute().count or 0
+        return {"total": total, "hoje": hoje_n}
+    except:
+        return {"total": 0, "hoje": 0}
 
 def db_add_trade(d):
-    conn = db_conn()
-    conn.execute("""
-        INSERT INTO trades (data, ativo, direcao, contratos, pontos, resultado,
-                            seguiu_setup, esticou_stop, hora, obs, criado_em)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
-    """, (d["data"], d["ativo"], d["direcao"], d["contratos"], d["pontos"],
-          d["resultado"], d["seguiu_setup"], d["esticou_stop"], d["hora"],
-          d["obs"], datetime.now(BR_TZ).isoformat()))
-    conn.commit()
-    conn.close()
+    try:
+        sb = get_supabase()
+        sb.table("trades").insert({
+            "user_id":      "default",
+            "data":         d["data"],
+            "ativo":        d["ativo"],
+            "direcao":      d["direcao"],
+            "contratos":    int(d["contratos"]),
+            "pontos":       float(d["pontos"]),
+            "resultado":    float(d["resultado"]),
+            "seguiu_setup": int(d["seguiu_setup"]),
+            "esticou_stop": int(d["esticou_stop"]),
+            "hora":         d["hora"],
+            "obs":          d["obs"],
+            "criado_em":    datetime.now(BR_TZ).isoformat(),
+        }).execute()
+    except Exception as e:
+        st.error(f"Erro ao salvar: {e}")
 
 def db_listar_trades(limite=500):
-    conn = db_conn()
-    rows = conn.execute("SELECT * FROM trades ORDER BY data DESC, id DESC LIMIT ?", (limite,)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        sb = get_supabase()
+        res = sb.table("trades").select("*").eq("user_id","default").order("data", desc=True).order("id", desc=True).limit(limite).execute()
+        return res.data or []
+    except:
+        return []
 
 def db_deletar_trade(trade_id):
-    conn = db_conn()
-    conn.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
-    conn.commit()
-    conn.close()
+    try:
+        sb = get_supabase()
+        sb.table("trades").delete().eq("id", trade_id).execute()
+    except: pass
 
 def db_trades_periodo(dias=30):
-    conn = db_conn()
-    limite = (datetime.now(BR_TZ) - timedelta(days=dias)).strftime("%Y-%m-%d")
-    rows = conn.execute("SELECT * FROM trades WHERE data >= ? ORDER BY data", (limite,)).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
+    try:
+        sb = get_supabase()
+        limite = (datetime.now(BR_TZ) - timedelta(days=dias)).strftime("%Y-%m-%d")
+        res = sb.table("trades").select("*").eq("user_id","default").gte("data", limite).order("data").execute()
+        return res.data or []
+    except:
+        return []
 
 # ── ESTATÍSTICAS ──────────────────────────────────────────────────────────────
 def calcular_estatisticas(trades):
