@@ -589,25 +589,53 @@ def _fetch_stooq(nome_sym):
     return nome, dados
 
 def _fetch_forex():
-    """Frankfurter — fallback de câmbio (yfinance é a fonte primária com variações)."""
+    """
+    AwesomeAPI (fonte primária) — dólar comercial BR, atualiza ~1min, sem chave.
+    Frankfurter como fallback se AwesomeAPI falhar.
+    """
     hdrs = {"User-Agent": "Mozilla/5.0"}
+    resultado = {}
+
+    # ── FONTE PRIMÁRIA: AwesomeAPI ────────────────────────────────────────────
     try:
         r = requests.get(
-            "https://api.frankfurter.app/latest?from=USD&to=BRL,EUR,GBP,JPY,CNY,AUD",
-            timeout=3, headers=hdrs)
+            "https://economia.awesomeapi.com.br/json/last/USD-BRL,EUR-USD,GBP-USD,USD-JPY,AUD-USD,USD-CNY",
+            timeout=4, headers=hdrs)
         if r.status_code == 200:
-            rates = r.json().get("rates", {})
-            return {
-                "_Dólar/BRL_fb": {"preco": rates.get("BRL",0), "var": 0},
-                "_EUR/USD_fb":   {"preco": round(1/rates["EUR"],5) if rates.get("EUR") else 0, "var": 0},
-                "_GBP/USD_fb":   {"preco": round(1/rates["GBP"],5) if rates.get("GBP") else 0, "var": 0},
-                "_USD/JPY_fb":   {"preco": rates.get("JPY",0), "var": 0},
-                "_AUD/USD_fb":   {"preco": round(1/rates["AUD"],5) if rates.get("AUD") else 0, "var": 0},
-                "_USD/CNY_fb":   {"preco": rates.get("CNY",0), "var": 0},
-            }
+            data = r.json()
+            def aw(code, preco_key="bid"):
+                d = data.get(code, {})
+                preco = float(d.get(preco_key, 0) or 0)
+                var   = float(d.get("pctChange", 0) or 0)
+                return {"preco": round(preco, 5), "var": round(var, 2)} if preco else None
+
+            if aw("USDBRL"):   resultado["Dólar/BRL"] = aw("USDBRL")
+            if aw("EURUSD"):   resultado["EUR/USD"]   = aw("EURUSD")
+            if aw("GBPUSD"):   resultado["GBP/USD"]   = aw("GBPUSD")
+            if aw("USDJPY"):   resultado["USD/JPY"]   = aw("USDJPY")
+            if aw("AUDUSD"):   resultado["AUD/USD"]   = aw("AUDUSD")
+            if aw("USDCNY"):   resultado["USD/CNY"]   = aw("USDCNY")
     except:
         pass
-    return {}
+
+    # ── FALLBACK: Frankfurter (sem variação %) ────────────────────────────────
+    if not resultado:
+        try:
+            r = requests.get(
+                "https://api.frankfurter.app/latest?from=USD&to=BRL,EUR,GBP,JPY,CNY,AUD",
+                timeout=3, headers=hdrs)
+            if r.status_code == 200:
+                rates = r.json().get("rates", {})
+                if rates.get("BRL"):   resultado["Dólar/BRL"] = {"preco": rates["BRL"], "var": 0}
+                if rates.get("EUR"):   resultado["EUR/USD"]   = {"preco": round(1/rates["EUR"],5), "var": 0}
+                if rates.get("GBP"):   resultado["GBP/USD"]   = {"preco": round(1/rates["GBP"],5), "var": 0}
+                if rates.get("JPY"):   resultado["USD/JPY"]   = {"preco": rates["JPY"], "var": 0}
+                if rates.get("AUD"):   resultado["AUD/USD"]   = {"preco": round(1/rates["AUD"],5), "var": 0}
+                if rates.get("CNY"):   resultado["USD/CNY"]   = {"preco": rates["CNY"], "var": 0}
+        except:
+            pass
+
+    return resultado
 
 def _fetch_cripto():
     hdrs = {"User-Agent": "Mozilla/5.0"}
@@ -756,25 +784,55 @@ def buscar_cotacoes():
     todas = [fut_yf, fut_forex, fut_cripto]
     done, _ = wait(todas, timeout=14)
 
+    # Ordem: yfinance primeiro (tem variações de período), depois AwesomeAPI
+    # sobrescreve preço/var do dólar com dados mais frescos
+    resultados_ordenados = []
+    forex_res = None
     for fut in done:
         try:
             res = fut.result(timeout=0.1)
-            if isinstance(res, dict):
-                resultado.update({k: v for k, v in res.items() if v and v.get("preco")})
+            if isinstance(res, dict) and res:
+                if fut == fut_forex:
+                    forex_res = res  # aplica por último
+                else:
+                    resultados_ordenados.append(res)
         except:
             pass
 
+    for res in resultados_ordenados:
+        resultado.update({k: v for k, v in res.items() if v and v.get("preco")})
+
+    # AwesomeAPI por último — sobrescreve preço/var do forex com dado mais atualizado
+    # mas preserva variações de período (var_semana, var_mes, var_ano) do yfinance
+    if forex_res:
+        for par, aw_data in forex_res.items():
+            if aw_data and aw_data.get("preco"):
+                if par in resultado:
+                    # herda períodos do yfinance, substitui preço e var pela AwesomeAPI
+                    merged = dict(resultado[par])
+                    merged["preco"] = aw_data["preco"]
+                    merged["var"]   = aw_data["var"]
+                    merged["var_dia"] = aw_data["var"]
+                    resultado[par] = merged
+                else:
+                    resultado[par] = aw_data
+
     ex.shutdown(wait=False)
 
-    # Câmbio: usa fallback do Frankfurter só para pares que o yfinance não trouxe
-    for par in ("Dólar/BRL","EUR/USD","GBP/USD","USD/JPY","AUD/USD","USD/CNY"):
-        fb_key = f"_{par}_fb"
-        if par not in resultado and fb_key in resultado:
-            resultado[par] = resultado[fb_key]
-    # Remove as chaves de fallback
+    # AwesomeAPI já retorna forex direto — remove chaves _fb residuais do yfinance
     for k in list(resultado.keys()):
         if k.startswith("_") and k.endswith("_fb"):
             resultado.pop(k, None)
+
+    # Forex: AwesomeAPI tem prioridade sobre yfinance (mais atualizado)
+    # yfinance traz variações de período (var_semana, var_mes, var_ano) — herda se disponível
+    for par in ("Dólar/BRL","EUR/USD","GBP/USD","USD/JPY","AUD/USD","USD/CNY"):
+        if par in resultado:
+            # Se yfinance também trouxe, herda as variações de período mas mantém preço da AwesomeAPI
+            yf_key = par
+            aw_data = resultado[par]
+            # AwesomeAPI já tem preco e var atualizados — só complementa com períodos do yfinance se existirem
+            # (o yfinance pode ter sobrescrito com dado mais velho — garantimos que AwesomeAPI vence no preço)
 
     # WINFUT — espelha IBOV (índice à vista; futuro anda colado)
     if "IBOVESPA" in resultado:
