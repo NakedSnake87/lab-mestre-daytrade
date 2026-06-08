@@ -3,3 +3,4 @@ requests
 groq
 pytz
 yfinance
+supabase
