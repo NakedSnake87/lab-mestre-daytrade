@@ -368,36 +368,65 @@ def calcular_score(stats):
 
 # ── ESCALONAMENTO DE CONTRATOS (por pontos acumulados) ────────────────────────
 ESCALA_PADRAO = {
-    "WIN": [(5000,1),(7500,2),(10000,3),(12500,4),(15000,5)],
-    "WDO": [(200,1),(300,2),(400,3),(500,4),(600,5)],
+    "WIN": [5000, 7500, 10000, 12500, 15000],  # pontos por ciclo para subir de nível
+    "WDO": [200, 300, 400, 500, 600],
 }
 
 def calcular_escalonamento(trades, escala=None):
-    """Soma pontos acumulados por ativo e determina contratos liberados.
-    'escala' é um dict {ativo: [(pontos, contratos), ...]}; usa o padrão se None."""
+    """
+    Lógica de ciclos progressivos:
+    - Nível 1: precisa de escala[0] pts → sobe para nível 2, zera contagem
+    - Nível 2: precisa de escala[1] pts → sobe para nível 3, zera contagem
+    - etc.
+    Retorna: nivel, contratos, pts_no_ciclo, meta_ciclo, pts_totais
+    """
     if escala is None:
         escala = ESCALA_PADRAO
+
+    # Acumula pontos por ativo
     acum = {"WIN": 0.0, "WDO": 0.0}
     for t in trades:
         a = t.get("ativo")
         if a in acum:
             acum[a] += t.get("pontos", 0)
+
     res = {}
-    for ativo, faixas in escala.items():
-        faixas = sorted(faixas, key=lambda x: x[0])  # ordena por pontos
-        pts = acum.get(ativo, 0)
-        contratos = 0
-        proxima = None
-        for limiar, c in faixas:
-            if pts >= limiar:
-                contratos = c
+    for ativo, metas in escala.items():
+        pts_total = acum.get(ativo, 0)
+        pts_restantes = pts_total
+        nivel = 1
+        max_nivel = len(metas) + 1
+
+        # Consome os ciclos um a um
+        for i, meta in enumerate(metas):
+            if pts_restantes >= meta:
+                pts_restantes -= meta
+                nivel = i + 2  # sobe de nível
             else:
-                proxima = (limiar, c)
                 break
+
+        # Nível atual = contratos liberados
+        contratos = nivel
+        nivel_atual = nivel
+        nivel_max = max_nivel
+
+        # Meta do ciclo atual
+        if nivel_atual <= len(metas):
+            meta_ciclo = metas[nivel_atual - 1]
+        else:
+            meta_ciclo = None  # nível máximo
+
+        pts_ciclo = pts_restantes if meta_ciclo else 0
+        pct = round(pts_ciclo / meta_ciclo * 100) if meta_ciclo else 100
+
         res[ativo] = {
-            "pontos": pts,
-            "contratos": contratos,
-            "proxima": proxima,  # (pontos_necessarios, contratos) ou None
+            "pts_totais":  pts_total,
+            "pts_ciclo":   pts_ciclo,
+            "meta_ciclo":  meta_ciclo,
+            "nivel":       nivel_atual,
+            "contratos":   contratos,
+            "nivel_max":   nivel_max,
+            "pct":         pct,
         }
     return res
 
@@ -2002,19 +2031,19 @@ if st.session_state.get("diario_liberado"):
             st.session_state.escala_wdo = [200, 300, 400, 500, 600]
 
         with st.expander("⚙️ Configurar minha escada de contratos"):
-            st.markdown('<div style="font-size:.78rem;color:#94a3b8;margin-bottom:.5rem">Defina quantos pontos acumulados liberam cada quantidade de contratos. Cada um faz a sua.</div>', unsafe_allow_html=True)
+            st.markdown('<div style="font-size:.78rem;color:#94a3b8;margin-bottom:.5rem">Pontos necessários em cada ciclo para subir de nível (1→2, 2→3, etc).</div>', unsafe_allow_html=True)
             cfg1, cfg2 = st.columns(2)
             nova_win, nova_wdo = [], []
             with cfg1:
                 st.markdown("**WINFUT**")
                 for i in range(5):
-                    nova_win.append(st.number_input(f"{i+1} contrato(s) a partir de (pts)", min_value=0,
+                    nova_win.append(st.number_input(f"Ciclo {i+1}→{i+2} contratos (pts)", min_value=100,
                                                      value=int(st.session_state.escala_win[i]),
                                                      step=500, key=f"cfg_win_{i}"))
             with cfg2:
                 st.markdown("**WDOFUT**")
                 for i in range(5):
-                    nova_wdo.append(st.number_input(f"{i+1} contrato(s) a partir de (pts)", min_value=0,
+                    nova_wdo.append(st.number_input(f"Ciclo {i+1}→{i+2} contratos (pts)", min_value=10,
                                                     value=int(st.session_state.escala_wdo[i]),
                                                     step=50, key=f"cfg_wdo_{i}"))
             if st.button("💾 Salvar minha escada"):
@@ -2022,40 +2051,50 @@ if st.session_state.get("diario_liberado"):
                 st.session_state.escala_wdo = nova_wdo
                 st.success("Escada atualizada!")
                 st.rerun()
-            st.markdown('<div style="font-size:.66rem;color:#475569;margin-top:.4rem">⚠️ Por enquanto a configuração vale só nesta sessão. Com o login (em breve) ela ficará salva na sua conta.</div>', unsafe_allow_html=True)
+            st.markdown('<div style="font-size:.66rem;color:#475569;margin-top:.4rem">⚠️ Config válida só nesta sessão. Com o login (em breve) ficará salva.</div>', unsafe_allow_html=True)
 
-        # Monta a escala a partir da config da sessão
         escala_user = {
-            "WIN": [(st.session_state.escala_win[i], i+1) for i in range(5)],
-            "WDO": [(st.session_state.escala_wdo[i], i+1) for i in range(5)],
+            "WIN": st.session_state.escala_win,
+            "WDO": st.session_state.escala_wdo,
         }
         trades_tudo = db_listar_trades(5000)
         esc = calcular_escalonamento(trades_tudo, escala_user)
         col_e1, col_e2 = st.columns(2)
         for col, ativo in zip([col_e1, col_e2], ["WIN", "WDO"]):
             e = esc[ativo]
-            pts = e["pontos"]
-            cont = e["contratos"]
-            prox = e["proxima"]
-            if cont == 0:
-                falta = prox[0] - pts if prox else 0
-                msg = f'<div style="font-size:.74rem;color:#f59e0b;margin-top:.3rem">Faltam <b>{falta:,.0f} pts</b> para liberar 1 contrato</div>'
-                cor_c = "#f59e0b"
-            elif prox:
-                falta = prox[0] - pts
-                msg = f'<div style="font-size:.74rem;color:#94a3b8;margin-top:.3rem">Faltam <b>{falta:,.0f} pts</b> para {prox[1]} contratos</div>'
-                cor_c = "#22c55e"
+            nivel     = e["nivel"]
+            contratos = e["contratos"]
+            pts_ciclo = e["pts_ciclo"]
+            meta      = e["meta_ciclo"]
+            pct       = e["pct"]
+            pts_total = e["pts_totais"]
+            nivel_max = e["nivel_max"]
+            is_max    = meta is None
+            cor_c = "#22c55e" if nivel >= 3 else "#f59e0b" if nivel == 2 else "#60a5fa"
+            if is_max:
+                barra_pct = 100
+                msg_ciclo = '<div style="font-size:.72rem;color:#22c55e;margin-top:.2rem">🏆 Nível máximo atingido!</div>'
             else:
-                msg = '<div style="font-size:.74rem;color:#22c55e;margin-top:.3rem">Faixa máxima atingida! 🏆</div>'
-                cor_c = "#22c55e"
-            col.markdown(
-                f'<div style="background:#0f172a;border:1px solid #1e293b;border-radius:10px;padding:.9rem 1.1rem">'
-                f'<div style="font-size:.7rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em">{ativo}FUT</div>'
-                f'<div style="display:flex;align-items:baseline;gap:.5rem;margin:.2rem 0">'
-                f'<span style="font-size:1.8rem;font-weight:700;color:{cor_c};font-family:\'JetBrains Mono\',monospace">{cont}</span>'
-                f'<span style="font-size:.8rem;color:#94a3b8">contrato(s) liberado(s)</span></div>'
-                f'<div style="font-size:.72rem;color:#64748b">Acumulado: <b style="color:#cbd5e1;font-family:\'JetBrains Mono\',monospace">{pts:,.0f} pts</b></div>'
-                f'{msg}</div>', unsafe_allow_html=True)
+                falta = meta - pts_ciclo
+                barra_pct = pct
+                msg_ciclo = f'<div style="font-size:.72rem;color:#94a3b8;margin-top:.2rem">Faltam <b style="color:#f1f5f9">{falta:,.0f} pts</b> para nível {nivel+1} ({contratos+1} contratos)</div>'
+            col.markdown(f"""
+            <div style="background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:1rem 1.2rem">
+              <div style="font-size:.65rem;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.4rem">{ativo}FUT</div>
+              <div style="display:flex;align-items:center;gap:.8rem;margin-bottom:.5rem">
+                <div style="font-size:2.2rem;font-weight:700;color:{cor_c};font-family:'JetBrains Mono',monospace;line-height:1">{contratos}</div>
+                <div>
+                  <div style="font-size:.78rem;color:#f1f5f9;font-weight:600">contrato(s)</div>
+                  <div style="font-size:.65rem;color:#64748b">Nível {nivel} de {nivel_max}</div>
+                </div>
+              </div>
+              <div style="font-size:.7rem;color:#64748b;margin-bottom:.3rem">Ciclo atual: <b style="color:#cbd5e1;font-family:'JetBrains Mono',monospace">{pts_ciclo:,.0f}</b> {f'/ {meta:,.0f} pts' if meta else 'pts'}</div>
+              <div style="background:#0a0e1a;border-radius:6px;height:8px;overflow:hidden;margin-bottom:.3rem">
+                <div style="width:{barra_pct}%;height:100%;background:{cor_c};border-radius:6px"></div>
+              </div>
+              {msg_ciclo}
+              <div style="font-size:.62rem;color:#475569;margin-top:.3rem">Total acumulado: {pts_total:,.0f} pts</div>
+            </div>""", unsafe_allow_html=True)
 
         # ── RANKING DE VAZAMENTOS ─────────────────────────────────────────────
         vaz = ranking_vazamentos(trades)
