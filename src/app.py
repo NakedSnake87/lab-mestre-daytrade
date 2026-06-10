@@ -2091,34 +2091,65 @@ if st.session_state.get("diario_liberado"):
 
     # ── HISTÓRICO DE OPERAÇÕES ────────────────────────────────────────────────
     st.markdown('<div class="sec-divider"></div><div class="sec-title">📋 Histórico de Operações</div>', unsafe_allow_html=True)
-    todos = db_listar_trades(100)
+    todos = db_listar_trades(2000)
     if not todos:
         st.markdown('<div style="color:#475569;font-size:.85rem;padding:.5rem 0">Nenhuma operação registrada ainda. Comece pelo formulário acima.</div>', unsafe_allow_html=True)
     else:
-        for t in todos[:30]:
-            cor = "#22c55e" if t["resultado"] > 0 else "#ef4444" if t["resultado"] < 0 else "#94a3b8"
-            dir_emoji = "🟢" if t["direcao"] == "Compra" else "🔴"
-            data_fmt = datetime.strptime(t["data"], "%Y-%m-%d").strftime("%d/%m")
-            flags = []
-            if t.get("esticou_stop"): flags.append("⚠️ stop esticado")
-            if not t.get("seguiu_setup"): flags.append("fora do setup")
-            flags_txt = " · ".join(flags)
-            cc1, cc2 = st.columns([6,1])
-            with cc1:
-                obs_html = f'<div style="font-size:.7rem;color:#64748b;margin-top:.2rem">{html_mod.escape(t["obs"])}</div>' if t.get("obs") else ''
-                flags_html = f'<div style="font-size:.68rem;color:#f59e0b;margin-top:.2rem">{flags_txt}</div>' if flags_txt else ''
-                card_html_hist = (
-                    f'<div style="background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:.5rem .8rem;margin-bottom:.35rem">'
-                    f'<div style="display:flex;justify-content:space-between;align-items:center">'
-                    f'<div style="font-size:.82rem;color:#e2e8f0">{dir_emoji} <b>{t["ativo"]}</b> · {data_fmt} · {t["hora"]} · {t["contratos"]}c · {t["pontos"]:+.0f}pts</div>'
-                    f'<div style="font-size:.9rem;font-weight:700;color:{cor};font-family:\'JetBrains Mono\',monospace">R$ {t["resultado"]:,.2f}</div>'
-                    f'</div>{flags_html}{obs_html}</div>'
-                )
-                st.markdown(card_html_hist, unsafe_allow_html=True)
-            with cc2:
-                if st.button("🗑️", key=f"del_{t['id']}"):
-                    db_deletar_trade(t["id"])
-                    st.rerun()
+        # Agrupa por mês
+        from collections import defaultdict
+        por_mes = defaultdict(list)
+        for t in todos:
+            try:
+                d = datetime.strptime(t["data"], "%Y-%m-%d")
+                chave = d.strftime("%Y-%m")
+                por_mes[chave].append(t)
+            except:
+                por_mes["outros"].append(t)
+
+        meses_ord = sorted(por_mes.keys(), reverse=True)
+        meses_nomes = {
+            "01":"Janeiro","02":"Fevereiro","03":"Março","04":"Abril",
+            "05":"Maio","06":"Junho","07":"Julho","08":"Agosto",
+            "09":"Setembro","10":"Outubro","11":"Novembro","12":"Dezembro"
+        }
+
+        for chave in meses_ord:
+            trades_mes = por_mes[chave]
+            if chave == "outros":
+                label = "Outros"
+            else:
+                ano, mes = chave.split("-")
+                label = f"{meses_nomes.get(mes, mes)}/{ano}"
+
+            # Resumo do mês
+            res_mes = sum(t["resultado"] for t in trades_mes)
+            cor_res = "#22c55e" if res_mes >= 0 else "#ef4444"
+            n_mes = len(trades_mes)
+
+            with st.expander(f"📅 {label}  —  {n_mes} operações  |  R$ {res_mes:,.2f}", expanded=(chave == meses_ord[0])):
+                for t in trades_mes:
+                    cor = "#22c55e" if t["resultado"] > 0 else "#ef4444" if t["resultado"] < 0 else "#94a3b8"
+                    dir_emoji = "🟢" if t["direcao"] == "Compra" else "🔴"
+                    data_fmt = datetime.strptime(t["data"], "%Y-%m-%d").strftime("%d/%m")
+                    flags = []
+                    if t.get("esticou_stop"): flags.append("⚠️ stop esticado")
+                    if not t.get("seguiu_setup"): flags.append("fora do setup")
+                    flags_txt = " · ".join(flags)
+                    cc1, cc2 = st.columns([6,1])
+                    with cc1:
+                        obs_html   = f'<div style="font-size:.7rem;color:#64748b;margin-top:.2rem">{html_mod.escape(t["obs"])}</div>' if t.get("obs") else ''
+                        flags_html = f'<div style="font-size:.68rem;color:#f59e0b;margin-top:.2rem">{flags_txt}</div>' if flags_txt else ''
+                        st.markdown(
+                            f'<div style="background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:.5rem .8rem;margin-bottom:.35rem">'
+                            f'<div style="display:flex;justify-content:space-between;align-items:center">'
+                            f'<div style="font-size:.82rem;color:#e2e8f0">{dir_emoji} <b>{t["ativo"]}</b> · {data_fmt} · {t["hora"]} · {t["contratos"]}c · {t["pontos"]:+.0f}pts</div>'
+                            f'<div style="font-size:.9rem;font-weight:700;color:{cor};font-family:\'JetBrains Mono\',monospace">R$ {t["resultado"]:,.2f}</div>'
+                            f'</div>{flags_html}{obs_html}</div>', unsafe_allow_html=True)
+                    with cc2:
+                        if st.button("🗑️", key=f"del_{t['id']}"):
+                            db_deletar_trade(t["id"])
+                            st.rerun()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RODAPÉ — Divulgação do curso (todas as abas)
