@@ -627,19 +627,29 @@ def _fetch_forex():
     hdrs = {"User-Agent": "Mozilla/5.0"}
     resultado = {}
 
-    # ── 1. BCB PTAX — cotação oficial do Banco Central ────────────────────────
+    # ── 1. BCB PTAX — cotação oficial + variação calculada ───────────────────
     try:
-        hoje = datetime.now(BR_TZ).strftime("%m-%d-%Y")
+        hoje = datetime.now(BR_TZ)
+        # Busca últimos 5 dias úteis para garantir ter ontem
+        d_ini = (hoje - timedelta(days=7)).strftime("%m-%d-%Y")
+        d_fim = hoje.strftime("%m-%d-%Y")
         r = requests.get(
-            f"https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/CotacaoDolarDia(dataCotacao=@dataCotacao)?@dataCotacao='{hoje}'&$format=json",
+            f"https://olinda.bcb.gov.br/olinda/servico/PTAX/versao/v1/odata/CotacaoDolarPeriodo(dataInicial=@dataInicial,dataFinalCotacao=@dataFinalCotacao)?@dataInicial='{d_ini}'&@dataFinalCotacao='{d_fim}'&$format=json&$orderby=dataHoraCotacao%20desc",
             timeout=5, headers=hdrs)
         if r.status_code == 200:
             valores = r.json().get("value", [])
-            if valores:
-                v = valores[-1]
-                preco = float(v.get("cotacaoVenda", 0) or 0)
-                if preco:
-                    resultado["Dólar/BRL"] = {"preco": round(preco, 4), "var": 0, "fonte": "BCB"}
+            if len(valores) >= 1:
+                preco_hoje = float(valores[0].get("cotacaoVenda", 0) or 0)
+                preco_ontem = float(valores[1].get("cotacaoVenda", 0) or 0) if len(valores) >= 2 else 0
+                if preco_hoje:
+                    var = round((preco_hoje - preco_ontem) / preco_ontem * 100, 2) if preco_ontem else 0
+                    resultado["Dólar/BRL"] = {
+                        "preco": round(preco_hoje, 4),
+                        "var":   var,
+                        "var_dia": var,
+                        "open":  round(preco_ontem, 4) if preco_ontem else 0,
+                        "fonte": "BCB"
+                    }
     except:
         pass
 
