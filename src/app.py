@@ -285,6 +285,25 @@ def db_trades_periodo(user_id, dias=30):
     except:
         return []
 
+def db_contar_trades_default():
+    """Conta quantos trades ainda estão com user_id='default'."""
+    try:
+        sb = get_supabase()
+        res = sb.table("trades").select("id", count="exact").eq("user_id", "default").execute()
+        return res.count or 0
+    except:
+        return 0
+
+def db_migrar_trades_default(novo_user_id):
+    """Migra todos os trades de user_id='default' para o novo user_id."""
+    try:
+        sb = get_supabase()
+        sb.table("trades").update({"user_id": novo_user_id}).eq("user_id", "default").execute()
+        return True
+    except Exception as e:
+        st.error(f"Erro na migração: {e}")
+        return False
+
 # ── ESTATÍSTICAS ──────────────────────────────────────────────────────────────
 def calcular_estatisticas(trades):
     if not trades:
@@ -1287,6 +1306,24 @@ with tab4:
         st.markdown('<div style="background:#0f172a;border:1px solid #1e293b;border-radius:12px;padding:1.5rem;text-align:center;color:#94a3b8;font-size:.9rem;margin:1rem 0">🔐 <b>Faça login para acessar seu Diário & Score.</b><br><span style="font-size:.78rem;color:#64748b">Cada trader tem seu próprio diário privado. Crie sua conta grátis no topo.</span></div>', unsafe_allow_html=True)
     else:
         uid = get_user_id()
+
+        # ── MIGRAÇÃO DE DADOS ANTIGOS (user_id='default' → user real) ─────
+        if "migrado" not in st.session_state:
+            n_default = db_contar_trades_default()
+            if n_default > 0:
+                st.markdown(f'<div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:12px;padding:1rem 1.2rem;margin-bottom:1rem">'
+                            f'<div style="font-size:.9rem;font-weight:700;color:#fbbf24;margin-bottom:.4rem">📦 {n_default} operações encontradas da versão anterior</div>'
+                            f'<div style="font-size:.78rem;color:#94a3b8;margin-bottom:.6rem">Essas operações estavam salvas sem login. Clique abaixo para migrar para sua conta.</div>'
+                            f'</div>', unsafe_allow_html=True)
+                if st.button("🔄  Migrar operações para minha conta", key="btn_migrar"):
+                    ok = db_migrar_trades_default(uid)
+                    if ok:
+                        st.session_state.migrado = True
+                        st.success(f"✅ {n_default} operações migradas com sucesso!")
+                        st.rerun()
+            else:
+                st.session_state.migrado = True
+
         try:
             ac = db_stats_acessos()
             st.markdown(f'<div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-bottom:.3rem"><div style="background:linear-gradient(135deg,#0a1628,#0f172a);border:1px solid #1e3a8a;border-radius:10px;padding:.55rem .9rem;min-width:130px"><div style="font-size:.58rem;color:#60a5fa;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.1rem">👥 Acessos totais</div><div style="font-size:1.3rem;font-weight:700;color:#f1f5f9;font-family:\'JetBrains Mono\',monospace">{ac["total"]:,}</div></div><div style="background:linear-gradient(135deg,#0a1628,#0f172a);border:1px solid #1e3a8a;border-radius:10px;padding:.55rem .9rem;min-width:130px"><div style="font-size:.58rem;color:#60a5fa;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.1rem">📅 Acessos hoje</div><div style="font-size:1.3rem;font-weight:700;color:#f1f5f9;font-family:\'JetBrains Mono\',monospace">{ac["hoje"]:,}</div></div></div>', unsafe_allow_html=True)
