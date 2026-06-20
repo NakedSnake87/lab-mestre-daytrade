@@ -1,23 +1,4 @@
 import streamlit as st
-st.markdown(
-    """
-    <style>
-    /* Remove o botão rosa de perfil do canto inferior direito */
-    .stAppViewerToolbar, [data-testid="stAppViewerToolbar"], .stAppDeployButton {
-        display: none !important;
-    }
-    /* Esconde o menu de 3 pontinhos e cabeçalhos */
-    #MainMenu, header {
-        visibility: hidden !important;
-    }
-    footer {
-        visibility: hidden !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
 import requests
 import base64
 import xml.etree.ElementTree as ET
