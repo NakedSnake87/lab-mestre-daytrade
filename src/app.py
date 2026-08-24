@@ -331,7 +331,7 @@ def ia(prompt, system="", historico=None, imagem_b64=None):
     if imagem_b64:
         msgs.append({"role":"user","content":[{"type":"text","text":prompt},{"type":"image_url","image_url":{"url":f"data:image/jpeg;base64,{imagem_b64}"}}]})
     else: msgs.append({"role":"user","content":prompt})
-    model="meta-llama/llama-4-scout-17b-16e-instruct" if imagem_b64 else "llama-3.3-70b-versatile"
+    model="openai/gpt-oss-120b" if imagem_b64 else "openai/gpt-oss-120b"
     return client.chat.completions.create(model=model,messages=msgs,max_tokens=1500,temperature=0.15).choices[0].message.content
 
 SYSTEM_PROMPT = """Você é o Mestre — um trader veterano com 15+ anos de tela em WIN e WDO na B3. Você é mentor, direto e fala como se estivesse na mesa de operações.
